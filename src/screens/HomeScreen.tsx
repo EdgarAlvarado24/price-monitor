@@ -5,21 +5,42 @@ import { EuroCard } from "../components/EuroCard";
 import { MarketStatus } from "../components/MarketStatus";
 import { BottomNav } from "../components/BottomNav";
 import { colors } from "../theme/colors";
-import { Axios } from "axios";
+import { useRates } from "../hooks/useRates";
 
 export function HomeScreen() {
+  const { rates, loading } = useRates();
+
+  if (loading || !rates) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.content}>
+          <Animated.View entering={FadeInUp.duration(500)}>
+            <PriceCard value={0} change={0} />
+          </Animated.View>
+          <Animated.View entering={FadeInUp.delay(150)}>
+            <EuroCard value={0} />
+          </Animated.View>
+          <MarketStatus open={false} lastUpdate="Cargando..." />
+        </View>
+        <BottomNav />
+      </View>
+    );
+  }
+
+  const usdChange = rates.current.usd - rates.previous.usd;
+
   return (
     <View style={styles.container}>
       <View style={styles.content}>
         <Animated.View entering={FadeInUp.duration(500)}>
-          <PriceCard value={36.45} change={0.12} />
+          <PriceCard value={rates.current.usd} change={usdChange} />
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(150)}>
-          <EuroCard value={39.12} />
+          <EuroCard value={rates.current.eur} />
         </Animated.View>
 
-        <MarketStatus open lastUpdate="Hoy, 10:32 AM" />
+        <MarketStatus open lastUpdate={`Actualizado: ${rates.current.date}`} />
       </View>
 
       <BottomNav />
