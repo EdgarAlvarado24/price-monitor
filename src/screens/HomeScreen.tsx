@@ -3,7 +3,6 @@ import Animated, { FadeInUp } from "react-native-reanimated";
 import { PriceCard } from "../components/PriceCard";
 import { EuroCard } from "../components/EuroCard";
 import { MarketStatus } from "../components/MarketStatus";
-import { BottomNav } from "../components/BottomNav";
 import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
 
@@ -22,7 +21,6 @@ export function HomeScreen() {
           </Animated.View>
           <MarketStatus open={false} lastUpdate="Cargando..." />
         </View>
-        <BottomNav />
       </View>
     );
   }
@@ -42,8 +40,6 @@ export function HomeScreen() {
 
         <MarketStatus open lastUpdate={`Actualizado: ${rates.current.date}`} />
       </View>
-
-      <BottomNav />
     </View>
   );
 }

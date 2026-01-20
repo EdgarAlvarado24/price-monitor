@@ -4,25 +4,33 @@ import { colors } from "../theme/colors";
 
 type Item = {
   name: keyof typeof MaterialIcons.glyphMap;
-  active?: boolean;
+  screen: "home" | "calculator" | "analytics";
 };
 
 const items: Item[] = [
-  { name: "home", active: true },
-  { name: "calculate" },
-  { name: "analytics" },
-  { name: "settings" },
+  { name: "home", screen: "home" },
+  { name: "calculate", screen: "calculator" },
+  { name: "analytics", screen: "analytics" },
 ];
 
-export function BottomNav() {
+type Props = {
+  currentScreen: "home" | "calculator" | "analytics";
+  onScreenChange: (screen: "home" | "calculator" | "analytics") => void;
+};
+
+export function BottomNav({ currentScreen, onScreenChange }: Props) {
   return (
     <View style={styles.container}>
       {items.map((item) => (
-        <TouchableOpacity key={item.name} style={styles.button}>
+        <TouchableOpacity
+          key={item.name}
+          style={styles.button}
+          onPress={() => onScreenChange(item.screen)}
+        >
           <MaterialIcons
             name={item.name}
             size={26}
-            color={item.active ? colors.primary : "rgba(255,255,255,0.25)"}
+            color={currentScreen === item.screen ? colors.primary : "rgba(255,255,255,0.25)"}
           />
         </TouchableOpacity>
       ))}

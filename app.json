@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "price-monitor",
-    "slug": "price-monitor",
+    "name": "Dolar a Bs",
+    "slug": "dolar-a-bolivares",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
