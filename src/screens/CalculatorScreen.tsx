@@ -27,16 +27,27 @@ export function CalculatorScreen() {
     } else if (key === "." && amount.includes(".")) {
       // No agregar otro punto
       return;
-    } else {
+    } else if (/^[0-9.]$/.test(key)) {
       setAmount(prev => prev + key);
     }
   };
 
-  const handleCopy = async () => {
+const handleCopy = async () => {
     const textToCopy = convertedAmount.toFixed(2);
     await Clipboard.setString(textToCopy);
     setShowCopyMessage(true);
     setTimeout(() => setShowCopyMessage(false), 2000);
+  };
+
+  const handlePaste = async () => {
+    const clipboardContent = await Clipboard.getString();
+    // Reemplazar punto por nada (separador de miles) y coma por punto (separador decimal)
+    let numericValue = clipboardContent.replace(/\./g, '').replace(/,/g, '.');
+    // Extraer solo números y punto decimal
+    numericValue = numericValue.replace(/[^0-9.]/g, '');
+    if (numericValue) {
+      setAmount(numericValue);
+    }
   };
 
   if (loading || !rates) {
@@ -69,9 +80,14 @@ export function CalculatorScreen() {
             <MaterialIcons name="expand-more" size={24} color={colors.primary} />
           </TouchableOpacity>
 
-          <View style={styles.inputSection}>
-            <Text style={styles.label}>Monto en {selectedOption.from}</Text>
-            <Text style={styles.input}>{amount || "0"}</Text>
+          <View style={styles.inputSectionWithPaste}>
+            <View style={styles.inputSection}>
+              <Text style={styles.label}>Monto en {selectedOption.from}</Text>
+              <Text style={styles.input}>{amount || "0"}</Text>
+            </View>
+            <TouchableOpacity style={styles.pasteButton} onPress={handlePaste}>
+              <MaterialIcons name="content-paste" size={20} color={colors.primary} />
+            </TouchableOpacity>
           </View>
 
           <View style={styles.resultSectionWithCopy}>
@@ -345,6 +361,20 @@ const styles = StyleSheet.create({
   },
   copyButtonDisabled: {
     opacity: 0.4,
+  },
+  inputSectionWithPaste: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 24,
+  },
+  pasteButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+    marginTop: 20,
+    marginLeft: -40,
   },
   copyMessage: {
     color: colors.primary,
