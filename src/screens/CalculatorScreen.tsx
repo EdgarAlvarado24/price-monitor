@@ -1,9 +1,9 @@
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Clipboard } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
 import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 type ConversionType = "bs-to-usd" | "usd-to-bs" | "bs-to-eur" | "eur-to-bs";
 
@@ -19,6 +19,7 @@ export function CalculatorScreen() {
   const [amount, setAmount] = useState("");
   const [conversionType, setConversionType] = useState<ConversionType>("usd-to-bs");
   const [showSelector, setShowSelector] = useState(false);
+  const [showCopyMessage, setShowCopyMessage] = useState(false);
 
   const handleKeyPress = (key: string) => {
     if (key === "backspace") {
@@ -29,6 +30,13 @@ export function CalculatorScreen() {
     } else {
       setAmount(prev => prev + key);
     }
+  };
+
+  const handleCopy = async () => {
+    const textToCopy = convertedAmount.toFixed(2);
+    await Clipboard.setString(textToCopy);
+    setShowCopyMessage(true);
+    setTimeout(() => setShowCopyMessage(false), 2000);
   };
 
   if (loading || !rates) {
@@ -66,9 +74,25 @@ export function CalculatorScreen() {
             <Text style={styles.input}>{amount || "0"}</Text>
           </View>
 
-          <View style={styles.resultSection}>
-            <Text style={styles.label}>Equivalente en {selectedOption.to}</Text>
-            <Text style={styles.result}>{convertedAmount.toFixed(2)}</Text>
+          <View style={styles.resultSectionWithCopy}>
+            <View style={styles.resultSection}>
+              <Text style={styles.label}>Equivalente en {selectedOption.to}</Text>
+              <Text style={styles.result}>{convertedAmount.toFixed(2)}</Text>
+              {showCopyMessage && (
+                <Text style={styles.copyMessage}>¡Copiado!</Text>
+              )}
+            </View>
+            <TouchableOpacity 
+              style={[styles.copyButtonFixed, !amount && styles.copyButtonDisabled]} 
+              onPress={handleCopy}
+              disabled={!amount}
+            >
+              <MaterialIcons 
+                name="content-copy" 
+                size={20} 
+                color={!amount ? "#666" : colors.primary} 
+              />
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.rateText}>Tasa actual: Bs. {rate.toFixed(2)} por {selectedOption.rateKey.toUpperCase()}</Text>
@@ -293,5 +317,40 @@ const styles = StyleSheet.create({
   },
   optionTextSelected: {
     color: "#fff",
+  },
+  resultSectionWithCopy: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 16,
+  },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  copyButton: {
+    marginLeft: 12,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+  },
+  copyButtonFixed: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+    marginTop: 20,
+    marginLeft: -50,
+  },
+  copyButtonDisabled: {
+    opacity: 0.4,
+  },
+  copyMessage: {
+    color: colors.primary,
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 4,
+    fontWeight: "600",
   },
 });
