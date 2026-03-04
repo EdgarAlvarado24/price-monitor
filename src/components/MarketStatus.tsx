@@ -1,14 +1,23 @@
 import { View, Text, StyleSheet } from "react-native";
 import { colors } from "../theme/colors";
+import { MaterialIcons } from "@expo/vector-icons";
 
 type Props = {
   open: boolean;
   lastUpdate: string;
+  isUsingCache?: boolean;
 };
 
-export function MarketStatus({ open, lastUpdate }: Props) {
+export function MarketStatus({ open, lastUpdate, isUsingCache }: Props) {
   return (
     <View style={styles.container}>
+      {isUsingCache && (
+        <View style={styles.cacheBadge}>
+          <MaterialIcons name="offline-bolt" size={14} color={colors.primary} />
+          <Text style={styles.cacheText}>MODO OFFLINE</Text>
+        </View>
+      )}
+
       <View style={styles.badge}>
         <View
           style={[
@@ -33,6 +42,22 @@ const styles = StyleSheet.create({
   container: {
     marginTop: 48,
     alignItems: "center",
+  },
+  cacheBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: "rgba(79,209,197,0.1)",
+    marginBottom: 12,
+  },
+  cacheText: {
+    color: colors.primary,
+    fontSize: 10,
+    letterSpacing: 1,
+    fontWeight: "700",
+    marginLeft: 4,
   },
   badge: {
     flexDirection: "row",

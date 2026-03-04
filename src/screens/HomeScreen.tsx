@@ -9,7 +9,7 @@ import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
 
 export function HomeScreen() {
-  const { rates, loading } = useRates();
+  const { rates, loading, isUsingCache } = useRates();
 
   if (loading || !rates) {
     return (
@@ -57,7 +57,7 @@ export function HomeScreen() {
           </Animated.View>
         )}
 
-        <MarketStatus open lastUpdate={`Actualizado: ${rates.current.date}`} />
+        <MarketStatus open lastUpdate={`Actualizado: ${rates.current.date}`} isUsingCache={isUsingCache} />
       </ScrollView>
     </View>
   );

@@ -18,44 +18,11 @@ const conversionOptions = [
 ];
 
 export function CalculatorScreen() {
-  const { rates, loading } = useRates();
+  const { rates, loading, isUsingCache } = useRates();
   const [amount, setAmount] = useState("");
   const [conversionType, setConversionType] = useState<ConversionType>("usd-to-bs");
   const [showSelector, setShowSelector] = useState(false);
   const [showCopyMessage, setShowCopyMessage] = useState(false);
-  const [cachedRates, setCachedRates] = useState<any>(null);
-
-  useEffect(() => {
-    const loadCachedRates = async () => {
-      try {
-        const cached = await AsyncStorage.getItem('@rates_cache');
-        if (cached) {
-          const { rates: cachedRateData } = JSON.parse(cached);
-          setCachedRates(cachedRateData);
-        }
-      } catch (error) {
-        console.error('Error loading cached rates:', error);
-      }
-    };
-
-    loadCachedRates();
-  }, []);
-
-  useEffect(() => {
-    if (rates && !loading) {
-      const saveRates = async () => {
-        try {
-          await localStorage.setItem('@rates_cache', JSON.stringify({
-            rates
-          }));
-        } catch (error) {
-          console.error('Error saving rates:', error);
-        }
-      };
-
-      saveRates();
-    }
-  }, [rates, loading]);
 
   const handleKeyPress = (key: string) => {
     if (key === "backspace") {
@@ -86,10 +53,9 @@ const handleCopy = async () => {
     }
   };
 
-const currentRates = rates || cachedRates;
-  const isUsingCache = !rates && cachedRates;
+const currentRates = rates;
   
-  if (loading && !currentRates) {
+  if (loading || !currentRates) {
     return (
       <View style={styles.container}>
         <View style={styles.content}>
