@@ -1,13 +1,14 @@
 import { View, Text, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
+import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 
 type Props = {
   value: number;
-  change?: number;
+  change: number;
 };
 
-export function EuroCard({ value, change = 0 }: Props) {
+export function USDTCard({ value, change }: Props) {
   const isPositive = change >= 0;
 
   return (
@@ -16,15 +17,20 @@ export function EuroCard({ value, change = 0 }: Props) {
       style={styles.card}
     >
       <View style={styles.badge}>
-        <Text style={styles.badgeText}>EURO</Text>
+        <Text style={styles.badgeText}>USDT</Text>
       </View>
 
       <View style={styles.priceRow}>
         <Text style={styles.currency}>Bs.</Text>
-        <Text style={styles.price}>{value.toFixed(2)}</Text>
+        <Text style={styles.price}>{value}</Text>
       </View>
 
       <View style={styles.trend}>
+        <MaterialIcons 
+          name={isPositive ? "trending-up" : "trending-down"} 
+          size={18} 
+          color={isPositive ? colors.green : colors.red} 
+        />
         <Text style={[styles.trendText, { color: isPositive ? colors.green : colors.red }]}>
           {isPositive ? "+" : ""}{change.toFixed(2)}
         </Text>
@@ -78,4 +84,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default EuroCard;
+export default USDTCard;

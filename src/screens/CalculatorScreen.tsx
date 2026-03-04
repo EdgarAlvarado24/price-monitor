@@ -4,14 +4,17 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
 import { useState, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-type ConversionType = "bs-to-usd" | "usd-to-bs" | "bs-to-eur" | "eur-to-bs";
+type ConversionType = "bs-to-usd" | "usd-to-bs" | "bs-to-eur" | "eur-to-bs" | "bs-to-usdt" | "usdt-to-bs";
 
 const conversionOptions = [
   { key: "usd-to-bs", label: "USD → Bs", from: "USD", to: "Bs", rateKey: "usd" },
   { key: "bs-to-usd", label: "Bs → USD", from: "Bs", to: "USD", rateKey: "usd" },
   { key: "eur-to-bs", label: "EUR → Bs", from: "EUR", to: "Bs", rateKey: "eur" },
   { key: "bs-to-eur", label: "Bs → EUR", from: "Bs", to: "EUR", rateKey: "eur" },
+  { key: "usdt-to-bs", label: "USDT → Bs", from: "USDT", to: "Bs", rateKey: "usdt" },
+  { key: "bs-to-usdt", label: "Bs → USDT", from: "Bs", to: "USDT", rateKey: "usdt" },
 ];
 
 export function CalculatorScreen() {
@@ -20,6 +23,39 @@ export function CalculatorScreen() {
   const [conversionType, setConversionType] = useState<ConversionType>("usd-to-bs");
   const [showSelector, setShowSelector] = useState(false);
   const [showCopyMessage, setShowCopyMessage] = useState(false);
+  const [cachedRates, setCachedRates] = useState<any>(null);
+
+  useEffect(() => {
+    const loadCachedRates = async () => {
+      try {
+        const cached = await AsyncStorage.getItem('@rates_cache');
+        if (cached) {
+          const { rates: cachedRateData } = JSON.parse(cached);
+          setCachedRates(cachedRateData);
+        }
+      } catch (error) {
+        console.error('Error loading cached rates:', error);
+      }
+    };
+
+    loadCachedRates();
+  }, []);
+
+  useEffect(() => {
+    if (rates && !loading) {
+      const saveRates = async () => {
+        try {
+          await localStorage.setItem('@rates_cache', JSON.stringify({
+            rates
+          }));
+        } catch (error) {
+          console.error('Error saving rates:', error);
+        }
+      };
+
+      saveRates();
+    }
+  }, [rates, loading]);
 
   const handleKeyPress = (key: string) => {
     if (key === "backspace") {
@@ -50,7 +86,10 @@ const handleCopy = async () => {
     }
   };
 
-  if (loading || !rates) {
+const currentRates = rates || cachedRates;
+  const isUsingCache = !rates && cachedRates;
+  
+  if (loading && !currentRates) {
     return (
       <View style={styles.container}>
         <View style={styles.content}>
@@ -61,7 +100,8 @@ const handleCopy = async () => {
   }
 
   const selectedOption = conversionOptions.find(opt => opt.key === conversionType)!;
-  const rate = rates.current[selectedOption.rateKey as "usd" | "eur"];
+  const rateKey = selectedOption.rateKey as "usd" | "eur" | "usdt";
+  const rate = currentRates.current[rateKey] || 0;
   const convertedAmount = amount ? (conversionType.includes("to-bs") ? parseFloat(amount) * rate : parseFloat(amount) / rate) : 0;
 
   return (
@@ -72,6 +112,13 @@ const handleCopy = async () => {
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(150)} style={styles.card}>
+          {isUsingCache && (
+            <View style={styles.cacheIndicator}>
+              <MaterialIcons name="offline-bolt" size={16} color={colors.primary} />
+              <Text style={styles.cacheIndicatorText}>Usando datos cacheados</Text>
+            </View>
+          )}
+          
           <TouchableOpacity
             style={styles.selector}
             onPress={() => setShowSelector(true)}
@@ -112,6 +159,12 @@ const handleCopy = async () => {
           </View>
 
           <Text style={styles.rateText}>Tasa actual: Bs. {rate.toFixed(2)} por {selectedOption.rateKey.toUpperCase()}</Text>
+
+          {currentRates.current.usdt ? (
+            <Text style={styles.usdtText}>USDT: Bs. {currentRates.current.usdt.toFixed(2)}</Text>
+          ) : (
+            <Text style={styles.usdtText}>USDT: No disponible</Text>
+          )}
 
           <View style={styles.keypad}>
             <View style={styles.keyRow}>
@@ -279,6 +332,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
   },
+  usdtText: {
+    color: colors.primary,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+    fontWeight: "600",
+  },
   keypad: {
     marginTop: 24,
     width: "100%",
@@ -382,5 +442,27 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 4,
     fontWeight: "600",
+  },
+  subtitle: {
+    color: colors.textMuted,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+  },
+  cacheIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(52, 152, 219, 0.1)",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+  },
+  cacheIndicatorText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "600",
+    marginLeft: 6,
   },
 });
