@@ -47,22 +47,14 @@ export interface RateCardData {
 }
 
 export type ConversionType =
-  | "usd-to-bs"
-  | "bs-to-usd"
-  | "eur-to-bs"
-  | "bs-to-eur"
-  | "usdt-to-bs"
-  | "bs-to-usdt"
-  | "cop-to-bs"
-  | "bs-to-cop"
-  | "brl-to-bs"
-  | "bs-to-brl";
+  | "dolar_bcv"
+  | "euro_bcv"
+  | "usdt";
 
 export interface ConversionOption {
   key: ConversionType;
   label: string;
-  from: string;
-  to: string;
+  simbolo: string;
   rateKey: keyof RatesData["current"];
   icon: string;
 }

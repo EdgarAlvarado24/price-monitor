@@ -6,35 +6,98 @@ import { colors } from "../theme/colors";
 import { Header } from "../components/Header";
 import { useRates } from "../hooks/useRates";
 import { useState, useCallback } from "react";
-import { ConversionType } from "../types/rates";
+import { ConversionType, RatesData } from "../types/rates";
 import { conversionOptions, formatNumber } from "../data/constants";
 
-// Estimación de la próxima tasa BCV (+2% de la actual como simulación)
-const estimateNextBcvRate = (currentRate: number): number => {
-  return currentRate * 1.02;
-};
+/** Parsea string formato venezolano a número */
+function parseNum(s: string): number | null {
+  if (!s || /^[.,\s]*$/.test(s)) return null;
+  let n = s.trim();
+  if (n.includes(",") && n.includes(".")) {
+    n = n.replace(/\./g, "").replace(",", ".");
+  } else if (n.includes(",")) {
+    n = n.replace(",", ".");
+  } else if (n.includes(".")) {
+    const parts = n.split(".");
+    if (parts.length > 2) {
+      n = n.replace(/\./g, "");
+    } else if (parts.length === 2 && parts[1].length !== 2 && parts[0].length <= 3 && parts[1].length === 3) {
+      n = n.replace(".", "");
+    }
+  }
+  const num = parseFloat(n);
+  return isNaN(num) ? null : num;
+}
 
 export function CalculatorScreen() {
   const { rates, loading, isUsingCache, error, refresh } = useRates();
-  const [amount, setAmount] = useState("");
-  const [conversionType, setConversionType] = useState<ConversionType>("usd-to-bs");
+  const [conversionType, setConversionType] = useState<ConversionType>("dolar_bcv");
   const [showSelector, setShowSelector] = useState(false);
   const [showCopyMessage, setShowCopyMessage] = useState(false);
-  const [useNextRate, setUseNextRate] = useState(false);
+  const [bsInput, setBsInput] = useState("");
+  const [divisaInput, setDivisaInput] = useState("");
+  const [activeField, setActiveField] = useState<"bs" | "divisa">("bs");
+
+  const selectedOption = conversionOptions.find(opt => opt.key === conversionType)!;
+  const rate = rates
+    ? Number(rates.current[selectedOption.rateKey as keyof RatesData["current"]]) || 0
+    : 0;
+
+  // Recalcular cuando cambia la tasa (por cambio de conversionType)
+  const recalc = useCallback((field: "bs" | "divisa", raw: string, currentRate: number) => {
+    if (!raw) {
+      if (field === "bs") {
+        setDivisaInput("");
+      } else {
+        setBsInput("");
+      }
+      return;
+    }
+    const num = parseNum(raw);
+    if (num === null || num < 0) return;
+    if (field === "bs") {
+      setDivisaInput((num / currentRate).toFixed(2));
+    } else {
+      setBsInput((num * currentRate).toFixed(2));
+    }
+  }, []);
 
   const handleKeyPress = useCallback((key: string) => {
+    const current = activeField === "bs" ? bsInput : divisaInput;
+    let newVal: string;
     if (key === "backspace") {
-      setAmount(prev => prev.slice(0, -1));
-    } else if (key === "." && amount.includes(".")) {
+      newVal = current.slice(0, -1);
+    } else if (key === "." || key === ",") {
+      // Solo permitir un separador decimal
+      if (current.includes(",") || current.includes(".")) return;
+      newVal = current + ","; // Siempre usar coma como decimal
+    } else if (/^[0-9]$/.test(key)) {
+      newVal = current + key;
+    } else {
       return;
-    } else if (/^[0-9.]$/.test(key)) {
-      setAmount(prev => prev + key);
     }
-  }, [amount]);
+    if (activeField === "bs") {
+      setBsInput(newVal);
+      recalc("bs", newVal, rate);
+    } else {
+      setDivisaInput(newVal);
+      recalc("divisa", newVal, rate);
+    }
+  }, [activeField, bsInput, divisaInput, rate, recalc]);
 
   const handleClear = useCallback(() => {
-    setAmount("");
+    setBsInput("");
+    setDivisaInput("");
+    setActiveField("bs");
   }, []);
+
+  // Formato display: si hay input mostrar el raw (para edición), si no placeholder
+  const bsDisplay = bsInput || "";
+  const divisaDisplay = divisaInput || "";
+
+  // Valor calculado para mostrar debajo
+  const calcBs = bsInput ? parseNum(bsInput) : null;
+  const calcDivisa = divisaInput ? parseNum(divisaInput) : null;
 
   if (loading || !rates) {
     return (
@@ -47,41 +110,46 @@ export function CalculatorScreen() {
     );
   }
 
-  const selectedOption = conversionOptions.find(opt => opt.key === conversionType)!;
-  const rateKey = selectedOption.rateKey as keyof typeof rates.current;
-  let rate = Number(rates.current[rateKey]) || 0;
-
-  if (useNextRate && (rateKey === "usd" || rateKey === "eur")) {
-    rate = estimateNextBcvRate(rate);
-  }
-
-  const isToBs = conversionType.includes("to-bs");
-  const convertedAmount = amount
-    ? isToBs
-      ? parseFloat(amount) * rate
-      : parseFloat(amount) / rate
-    : 0;
-
-  const currentRate = Number(rates.current[rateKey]) || 0;
-  const nextRate = (rateKey === "usd" || rateKey === "eur") ? estimateNextBcvRate(currentRate) : currentRate;
-
-  const doCopy = async () => {
-    if (!amount) return;
-    const text = `${amount} ${selectedOption.from} = ${convertedAmount.toFixed(2)} ${selectedOption.to}`;
-    await Clipboard.setStringAsync(text);
-    setShowCopyMessage(true);
-    setTimeout(() => setShowCopyMessage(false), 2000);
-  };
-
   const doPaste = async () => {
     const clipboardContent = await Clipboard.getStringAsync();
     if (!clipboardContent) return;
     let numericValue = clipboardContent.replace(/\./g, "").replace(/,/g, ".");
     numericValue = numericValue.replace(/[^0-9.]/g, "");
     if (numericValue) {
-      setAmount(numericValue);
+      const num = parseFloat(numericValue);
+      if (!isNaN(num) && num >= 0) {
+        if (activeField === "bs") {
+          const raw = num % 1 === 0 ? String(num) : numericValue;
+          setBsInput(raw);
+          recalc("bs", raw, rate);
+        } else {
+          const raw = num % 1 === 0 ? String(num) : numericValue;
+          setDivisaInput(raw);
+          recalc("divisa", raw, rate);
+        }
+      }
     }
   };
+
+  const doCopy = async () => {
+    const result = bsInput
+      ? `${formatNumber(parseNum(bsInput)!)} Bs → ${
+          divisaInput
+            ? formatNumber(parseNum(divisaInput)!)
+            : "—"
+        } ${selectedOption.simbolo}`
+      : divisaInput
+        ? `${formatNumber(parseNum(divisaInput)!)} ${selectedOption.simbolo} → ${
+            bsInput ? formatNumber(parseNum(bsInput)!) : "—"
+          } Bs`
+        : null;
+    if (!result) return;
+    await Clipboard.setStringAsync(result);
+    setShowCopyMessage(true);
+    setTimeout(() => setShowCopyMessage(false), 2000);
+  };
+
+  const isInput = !!(bsInput || divisaInput);
 
   return (
     <View style={styles.container}>
@@ -102,7 +170,7 @@ export function CalculatorScreen() {
             </View>
           )}
 
-          {/* Selector de conversión */}
+          {/* Selector de tipo */}
           <TouchableOpacity
             style={styles.selector}
             onPress={() => setShowSelector(true)}
@@ -113,79 +181,75 @@ export function CalculatorScreen() {
             <MaterialIcons name="expand-more" size={20} color={colors.primary} />
           </TouchableOpacity>
 
-          {/* Toggle próxima tasa */}
-          {(rateKey === "usd" || rateKey === "eur") && (
-            <TouchableOpacity
-              style={[styles.nextRateToggle, useNextRate && styles.nextRateToggleActive]}
-              onPress={() => setUseNextRate(!useNextRate)}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons
-                name={useNextRate ? "toggle-on" : "toggle-off"}
-                size={20}
-                color={useNextRate ? colors.primary : colors.textMuted}
-              />
-              <Text style={[styles.nextRateText, useNextRate && styles.nextRateTextActive]}>
-                Próxima tasa BCV
-              </Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Input con paste */}
-          <View style={styles.inputRow}>
-            <View style={styles.inputSection}>
-              <Text style={styles.inputLabel}>MONTO EN {selectedOption.from}</Text>
-              <View style={styles.inputBox}>
-                <Text style={styles.inputText}>{amount || "0"}</Text>
-                {amount.length > 0 && (
-                  <TouchableOpacity onPress={handleClear} style={styles.clearBtn}>
-                    <MaterialIcons name="close" size={16} color={colors.textMuted} />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-            <TouchableOpacity style={styles.actionBtn} onPress={doPaste}>
-              <MaterialIcons name="content-paste" size={18} color={colors.primary} />
-            </TouchableOpacity>
+          {/* Tasa actual */}
+          <View style={styles.rateBadge}>
+            <Text style={styles.rateBadgeText}>
+              1 {selectedOption.simbolo} = {formatNumber(rate)} Bs
+            </Text>
           </View>
 
-          {/* Resultado con copy */}
-          <View style={styles.resultRow}>
-            <View style={styles.resultSection}>
-              <Text style={styles.inputLabel}>EQUIVALENTE EN {selectedOption.to}</Text>
-              <Text style={styles.resultText}>
-                {convertedAmount > 0 ? formatNumber(convertedAmount) : "0.00"}
+          {/* Bs INPUT */}
+          <TouchableOpacity
+            style={[styles.inputSection, activeField === "bs" && styles.inputSectionActive]}
+            onPress={() => setActiveField("bs")}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.inputLabel}>BOLÍVARES (BS)</Text>
+            <View style={styles.inputRow}>
+              <Text style={styles.inputPrefix}>Bs</Text>
+              <Text style={[styles.inputValue, !bsInput && styles.inputPlaceholder]}>
+                {bsDisplay || "0,00"}
               </Text>
             </View>
+            {activeField === "bs" && <View style={styles.activeIndicator} />}
+          </TouchableOpacity>
+
+          {/* Divisa INPUT */}
+          <TouchableOpacity
+            style={[styles.inputSection, activeField === "divisa" && styles.inputSectionActive]}
+            onPress={() => setActiveField("divisa")}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.inputLabel}>{selectedOption.label.toUpperCase()} ({selectedOption.simbolo})</Text>
+            <View style={styles.inputRow}>
+              <Text style={styles.inputPrefix}>{selectedOption.simbolo}</Text>
+              <Text style={[styles.inputValue, !divisaInput && styles.inputPlaceholder]}>
+                {divisaDisplay || "0,00"}
+              </Text>
+            </View>
+            {activeField === "divisa" && <View style={styles.activeIndicator} />}
+          </TouchableOpacity>
+
+          {/* Resultado complementario */}
+          {isInput && (
+            <View style={styles.complementaryResult}>
+              <MaterialIcons name="swap-vert" size={14} color={colors.textMuted} />
+              <Text style={styles.complementaryText}>
+                {activeField === "bs"
+                  ? `${formatNumber(parseNum(bsInput)!)} Bs = ${divisaDisplay || "—"} ${selectedOption.simbolo}`
+                  : `${formatNumber(parseNum(divisaInput)!)} ${selectedOption.simbolo} = ${bsDisplay || "—"} Bs`}
+              </Text>
+            </View>
+          )}
+
+          {/* Botones de acción: copiar y pegar */}
+          <View style={styles.actionRow}>
             <TouchableOpacity
-              style={[styles.actionBtn, !amount && styles.actionBtnDisabled]}
+              style={[styles.actionBtn, !isInput && styles.actionBtnDisabled]}
               onPress={doCopy}
-              disabled={!amount}
+              disabled={!isInput}
             >
               <MaterialIcons
                 name="content-copy"
-                size={18}
-                color={!amount ? colors.textDim : colors.primary}
+                size={16}
+                color={!isInput ? colors.textDim : colors.primary}
               />
+              <Text style={[styles.actionBtnText, !isInput && { color: colors.textDim }]}>Copiar</Text>
             </TouchableOpacity>
-          </View>
-
-          {/* Tasas actuales */}
-          <View style={styles.ratesInfo}>
-            <View style={styles.rateRow}>
-              <Text style={styles.rateLabel}>Tasa actual:</Text>
-              <Text style={styles.rateValue}>Bs. {formatNumber(currentRate)}</Text>
-            </View>
-            {useNextRate && (rateKey === "usd" || rateKey === "eur") && (
-              <View style={[styles.rateRow, styles.rateRowNext]}>
-                <Text style={[styles.rateLabel, { color: colors.yellow }]}>Próxima tasa (est.):</Text>
-                <Text style={[styles.rateValue, { color: colors.yellow }]}>Bs. {formatNumber(nextRate)}</Text>
-              </View>
-            )}
-            <View style={styles.rateRow}>
-              <Text style={styles.rateLabel}>USDT (P2P):</Text>
-              <Text style={[styles.rateValue, { color: colors.usdtColor }]}>Bs. {formatNumber(rates.current.usdt)}</Text>
-            </View>
+            <TouchableOpacity style={styles.actionBtn} onPress={doPaste}>
+              <MaterialIcons name="content-paste" size={16} color={colors.primary} />
+              <Text style={styles.actionBtnText}>Pegar</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Mensaje de copiado */}
@@ -198,7 +262,7 @@ export function CalculatorScreen() {
 
           {/* Teclado numérico */}
           <View style={styles.keypad}>
-            {[["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], [".", "0", "backspace"]].map((row, i) => (
+            {[["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], [",", "0", "backspace"]].map((row, i) => (
               <View key={i} style={styles.keyRow}>
                 {row.map((key) => (
                   <TouchableOpacity
@@ -216,6 +280,26 @@ export function CalculatorScreen() {
                 ))}
               </View>
             ))}
+            <TouchableOpacity style={styles.keyClear} onPress={handleClear} activeOpacity={0.6}>
+              <Text style={styles.keyClearText}>Limpiar</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Mini resumen de tasas */}
+          <View style={styles.ratesFooter}>
+            <Text style={styles.ratesFooterTitle}>Tasas de referencia</Text>
+            <View style={styles.ratesFooterRow}>
+              <Text style={styles.ratesFooterLabel}>🇺🇸 Dólar BCV</Text>
+              <Text style={styles.ratesFooterValue}>Bs. {formatNumber(rates.current.usd)}</Text>
+            </View>
+            <View style={styles.ratesFooterRow}>
+              <Text style={styles.ratesFooterLabel}>🇪🇺 Euro BCV</Text>
+              <Text style={styles.ratesFooterValue}>Bs. {formatNumber(rates.current.eur)}</Text>
+            </View>
+            <View style={styles.ratesFooterRow}>
+              <Text style={styles.ratesFooterLabel}>₿ USDT (P2P)</Text>
+              <Text style={[styles.ratesFooterValue, { color: colors.usdtColor }]}>Bs. {formatNumber(rates.current.usdt)}</Text>
+            </View>
           </View>
         </Animated.View>
       </View>
@@ -229,7 +313,7 @@ export function CalculatorScreen() {
       >
         <Pressable style={styles.modalOverlay} onPress={() => setShowSelector(false)}>
           <Pressable style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Selecciona conversión</Text>
+            <Text style={styles.modalTitle}>Selecciona tipo de cambio</Text>
             <FlatList
               data={conversionOptions}
               keyExtractor={(item) => item.key}
@@ -241,7 +325,6 @@ export function CalculatorScreen() {
                   ]}
                   onPress={() => {
                     setConversionType(item.key as ConversionType);
-                    setUseNextRate(false);
                     setShowSelector(false);
                   }}
                 >
@@ -296,6 +379,7 @@ const styles = StyleSheet.create({
     padding: 20,
     borderWidth: 1,
     borderColor: colors.border,
+    marginBottom: 20,
   },
   cacheIndicator: {
     flexDirection: "row",
@@ -315,12 +399,13 @@ const styles = StyleSheet.create({
   selector: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
     backgroundColor: colors.surfaceLight,
     borderRadius: 14,
     paddingVertical: 10,
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 8,
     alignSelf: "center",
   },
   selectorText: {
@@ -328,31 +413,28 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "600",
   },
-  nextRateToggle: {
-    flexDirection: "row",
+  rateBadge: {
     alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 6,
-    marginBottom: 16,
+    marginBottom: 20,
   },
-  nextRateToggleActive: {},
-  nextRateText: {
+  rateBadgeText: {
     color: colors.textMuted,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  nextRateTextActive: {
-    color: colors.yellow,
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 16,
+    fontSize: 13,
+    fontWeight: "500",
   },
   inputSection: {
-    flex: 1,
+    backgroundColor: colors.surfaceLight,
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginBottom: 10,
+    borderWidth: 2,
+    borderColor: "transparent",
+    position: "relative",
+  },
+  inputSectionActive: {
+    borderColor: colors.primary,
+    backgroundColor: "rgba(0,212,170,0.06)",
   },
   inputLabel: {
     color: colors.textMuted,
@@ -361,71 +443,70 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom: 6,
   },
-  inputBox: {
+  inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
   },
-  inputText: {
+  inputPrefix: {
+    color: colors.textMuted,
+    fontSize: 16,
+    fontWeight: "600",
+    marginRight: 8,
+  },
+  inputValue: {
     flex: 1,
     color: colors.text,
-    fontSize: 18,
-    fontWeight: "600",
+    fontSize: 22,
+    fontWeight: "700",
+    textAlign: "right",
+    fontVariant: ["tabular-nums"],
   },
-  clearBtn: {
-    padding: 4,
+  inputPlaceholder: {
+    color: colors.textDim,
+    fontWeight: "400",
   },
-  resultRow: {
+  activeIndicator: {
+    position: "absolute",
+    bottom: 8,
+    right: 16,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+  },
+  complementaryResult: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 16,
-  },
-  resultSection: {
-    flex: 1,
-  },
-  resultText: {
-    color: colors.primary,
-    fontSize: 28,
-    fontWeight: "800",
-  },
-  actionBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceLight,
     alignItems: "center",
     justifyContent: "center",
-    marginTop: 18,
+    gap: 6,
+    paddingVertical: 8,
+    marginBottom: 4,
+  },
+  complementaryText: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "500",
+  },
+  actionRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  actionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surfaceLight,
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
   },
   actionBtnDisabled: {
     opacity: 0.4,
   },
-  ratesInfo: {
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 14,
-    padding: 14,
-    gap: 6,
-    marginBottom: 12,
-  },
-  rateRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  rateRowNext: {
-    paddingTop: 6,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  rateLabel: {
-    color: colors.textMuted,
-    fontSize: 12,
-  },
-  rateValue: {
-    color: colors.textSecondary,
+  actionBtnText: {
+    color: colors.primary,
     fontSize: 12,
     fontWeight: "600",
   },
@@ -435,7 +516,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     paddingVertical: 8,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   copyMessageText: {
     color: colors.green,
@@ -460,6 +541,47 @@ const styles = StyleSheet.create({
   keyText: {
     color: colors.text,
     fontSize: 18,
+    fontWeight: "600",
+  },
+  keyClear: {
+    backgroundColor: "rgba(255,82,82,0.1)",
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 2,
+  },
+  keyClearText: {
+    color: colors.red,
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  ratesFooter: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  ratesFooterTitle: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1,
+    textTransform: "uppercase",
+    marginBottom: 8,
+  },
+  ratesFooterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 3,
+  },
+  ratesFooterLabel: {
+    color: colors.textMuted,
+    fontSize: 12,
+  },
+  ratesFooterValue: {
+    color: colors.textSecondary,
+    fontSize: 12,
     fontWeight: "600",
   },
   modalOverlay: {
