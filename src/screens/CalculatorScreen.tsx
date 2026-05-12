@@ -1,24 +1,28 @@
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Clipboard } from "react-native";
 import Animated, { FadeInUp } from "react-native-reanimated";
 import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-type ConversionType = "bs-to-usd" | "usd-to-bs" | "bs-to-eur" | "eur-to-bs";
+type ConversionType = "bs-to-usd" | "usd-to-bs" | "bs-to-eur" | "eur-to-bs" | "bs-to-usdt" | "usdt-to-bs";
 
 const conversionOptions = [
   { key: "usd-to-bs", label: "USD → Bs", from: "USD", to: "Bs", rateKey: "usd" },
   { key: "bs-to-usd", label: "Bs → USD", from: "Bs", to: "USD", rateKey: "usd" },
   { key: "eur-to-bs", label: "EUR → Bs", from: "EUR", to: "Bs", rateKey: "eur" },
   { key: "bs-to-eur", label: "Bs → EUR", from: "Bs", to: "EUR", rateKey: "eur" },
+  { key: "usdt-to-bs", label: "USDT → Bs", from: "USDT", to: "Bs", rateKey: "usdt" },
+  { key: "bs-to-usdt", label: "Bs → USDT", from: "Bs", to: "USDT", rateKey: "usdt" },
 ];
 
 export function CalculatorScreen() {
-  const { rates, loading } = useRates();
+  const { rates, loading, isUsingCache } = useRates();
   const [amount, setAmount] = useState("");
   const [conversionType, setConversionType] = useState<ConversionType>("usd-to-bs");
   const [showSelector, setShowSelector] = useState(false);
+  const [showCopyMessage, setShowCopyMessage] = useState(false);
 
   const handleKeyPress = (key: string) => {
     if (key === "backspace") {
@@ -26,12 +30,32 @@ export function CalculatorScreen() {
     } else if (key === "." && amount.includes(".")) {
       // No agregar otro punto
       return;
-    } else {
+    } else if (/^[0-9.]$/.test(key)) {
       setAmount(prev => prev + key);
     }
   };
 
-  if (loading || !rates) {
+const handleCopy = async () => {
+    const textToCopy = convertedAmount.toFixed(2);
+    await Clipboard.setString(textToCopy);
+    setShowCopyMessage(true);
+    setTimeout(() => setShowCopyMessage(false), 2000);
+  };
+
+  const handlePaste = async () => {
+    const clipboardContent = await Clipboard.getString();
+    // Reemplazar punto por nada (separador de miles) y coma por punto (separador decimal)
+    let numericValue = clipboardContent.replace(/\./g, '').replace(/,/g, '.');
+    // Extraer solo números y punto decimal
+    numericValue = numericValue.replace(/[^0-9.]/g, '');
+    if (numericValue) {
+      setAmount(numericValue);
+    }
+  };
+
+const currentRates = rates;
+  
+  if (loading || !currentRates) {
     return (
       <View style={styles.container}>
         <View style={styles.content}>
@@ -42,7 +66,8 @@ export function CalculatorScreen() {
   }
 
   const selectedOption = conversionOptions.find(opt => opt.key === conversionType)!;
-  const rate = rates.current[selectedOption.rateKey as "usd" | "eur"];
+  const rateKey = selectedOption.rateKey as "usd" | "eur" | "usdt";
+  const rate = currentRates.current[rateKey] || 0;
   const convertedAmount = amount ? (conversionType.includes("to-bs") ? parseFloat(amount) * rate : parseFloat(amount) / rate) : 0;
 
   return (
@@ -53,6 +78,13 @@ export function CalculatorScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInUp.delay(150)} style={styles.card}>
+          {isUsingCache && (
+            <View style={styles.cacheIndicator}>
+              <MaterialIcons name="offline-bolt" size={16} color={colors.primary} />
+              <Text style={styles.cacheIndicatorText}>Usando datos cacheados</Text>
+            </View>
+          )}
+          
           <TouchableOpacity
             style={styles.selector}
             onPress={() => setShowSelector(true)}
@@ -61,17 +93,44 @@ export function CalculatorScreen() {
             <MaterialIcons name="expand-more" size={24} color={colors.primary} />
           </TouchableOpacity>
 
-          <View style={styles.inputSection}>
-            <Text style={styles.label}>Monto en {selectedOption.from}</Text>
-            <Text style={styles.input}>{amount || "0"}</Text>
+          <View style={styles.inputSectionWithPaste}>
+            <View style={styles.inputSection}>
+              <Text style={styles.label}>Monto en {selectedOption.from}</Text>
+              <Text style={styles.input}>{amount || "0"}</Text>
+            </View>
+            <TouchableOpacity style={styles.pasteButton} onPress={handlePaste}>
+              <MaterialIcons name="content-paste" size={20} color={colors.primary} />
+            </TouchableOpacity>
           </View>
 
-          <View style={styles.resultSection}>
-            <Text style={styles.label}>Equivalente en {selectedOption.to}</Text>
-            <Text style={styles.result}>{convertedAmount.toFixed(2)}</Text>
+          <View style={styles.resultSectionWithCopy}>
+            <View style={styles.resultSection}>
+              <Text style={styles.label}>Equivalente en {selectedOption.to}</Text>
+              <Text style={styles.result}>{convertedAmount.toFixed(2)}</Text>
+              {showCopyMessage && (
+                <Text style={styles.copyMessage}>¡Copiado!</Text>
+              )}
+            </View>
+            <TouchableOpacity 
+              style={[styles.copyButtonFixed, !amount && styles.copyButtonDisabled]} 
+              onPress={handleCopy}
+              disabled={!amount}
+            >
+              <MaterialIcons 
+                name="content-copy" 
+                size={20} 
+                color={!amount ? "#666" : colors.primary} 
+              />
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.rateText}>Tasa actual: Bs. {rate.toFixed(2)} por {selectedOption.rateKey.toUpperCase()}</Text>
+
+          {currentRates.current.usdt ? (
+            <Text style={styles.usdtText}>USDT: Bs. {currentRates.current.usdt.toFixed(2)}</Text>
+          ) : (
+            <Text style={styles.usdtText}>USDT: No disponible</Text>
+          )}
 
           <View style={styles.keypad}>
             <View style={styles.keyRow}>
@@ -239,6 +298,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: "center",
   },
+  usdtText: {
+    color: colors.primary,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+    fontWeight: "600",
+  },
   keypad: {
     marginTop: 24,
     width: "100%",
@@ -293,5 +359,76 @@ const styles = StyleSheet.create({
   },
   optionTextSelected: {
     color: "#fff",
+  },
+  resultSectionWithCopy: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 16,
+  },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  copyButton: {
+    marginLeft: 12,
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+  },
+  copyButtonFixed: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+    marginTop: 20,
+    marginLeft: -50,
+  },
+  copyButtonDisabled: {
+    opacity: 0.4,
+  },
+  inputSectionWithPaste: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    width: "100%",
+    marginBottom: 24,
+  },
+  pasteButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: "rgba(30,30,35,0.3)",
+    marginTop: 20,
+    marginLeft: -40,
+  },
+  copyMessage: {
+    color: colors.primary,
+    fontSize: 12,
+    textAlign: "center",
+    marginTop: 4,
+    fontWeight: "600",
+  },
+  subtitle: {
+    color: colors.textMuted,
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 8,
+  },
+  cacheIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(52, 152, 219, 0.1)",
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    marginBottom: 16,
+  },
+  cacheIndicatorText: {
+    color: colors.primary,
+    fontSize: 12,
+    fontWeight: "600",
+    marginLeft: 6,
   },
 });

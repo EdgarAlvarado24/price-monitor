@@ -20,9 +20,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
+      "edgeToEdgeEnabled": false,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.pricemonitor"
+      "package": "com.anonymous.pricemonitor",
+      "minSdkVersion": 24
     },
     "web": {
       "favicon": "./assets/favicon.png"

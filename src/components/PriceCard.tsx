@@ -34,21 +34,21 @@ export function PriceCard({ value, change }: Props) {
 const styles = StyleSheet.create({
   card: {
     width: "100%",
-    padding: 40,
-    borderRadius: 40,
+    padding: 24,
+    borderRadius: 32,
     alignItems: "center",
   },
   badge: {
     position: "absolute",
-    top: -12,
-    paddingHorizontal: 16,
-    paddingVertical: 4,
+    top: -10,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
     borderRadius: 999,
     backgroundColor: "rgba(79,209,197,0.1)",
   },
   badgeText: {
     color: colors.primary,
-    fontSize: 10,
+    fontSize: 9,
     letterSpacing: 2,
     fontWeight: "700",
   },
@@ -58,19 +58,20 @@ const styles = StyleSheet.create({
   },
   currency: {
     color: colors.textMuted,
-    fontSize: 24,
+    fontSize: 18,
   },
   price: {
     color: "#fff",
-    fontSize: 64,
-    fontWeight: "800",
+    fontSize: 32,
+    fontWeight: "700",
   },
   trend: {
     flexDirection: "row",
-    marginTop: 12,
+    marginTop: 8,
   },
   trendText: {
     color: colors.green,
+    fontSize: 12,
     marginLeft: 4,
     fontWeight: "700",
   },
