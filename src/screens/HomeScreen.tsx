@@ -1,63 +1,134 @@
-import { View, StyleSheet, ScrollView } from "react-native";
-import Animated, { FadeInUp } from "react-native-reanimated";
-import { PriceCard } from "../components/PriceCard";
-import { EuroCard } from "../components/EuroCard";
-import { USDTCard } from "../components/USDTCard";
-import { USDTDiffCard } from "../components/USDTDiffCard";
-import { MarketStatus } from "../components/MarketStatus";
+import { View, StyleSheet, ScrollView, RefreshControl } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { colors } from "../theme/colors";
 import { useRates } from "../hooks/useRates";
+import { RateCard } from "../components/RateCard";
+import { SpreadCard } from "../components/SpreadCard";
+import { MarketStatus } from "../components/MarketStatus";
+import { Header } from "../components/Header";
+import { SkeletonCard } from "../components/SkeletonCard";
 
 export function HomeScreen() {
-  const { rates, loading, isUsingCache } = useRates();
+  const { rates, loading, isUsingCache, error, refresh } = useRates();
 
   if (loading || !rates) {
     return (
       <View style={styles.container}>
-        <View style={styles.content}>
-          <Animated.View entering={FadeInUp.duration(500)}>
-            <PriceCard value={0} change={0} />
-          </Animated.View>
-          <Animated.View entering={FadeInUp.delay(150)} style={styles.overlapCard}>
-            <EuroCard value={0} change={0} />
-          </Animated.View>
-          <MarketStatus open={false} lastUpdate="Cargando..." />
-        </View>
+        <Header title="Tasas del día" subtitle="Cargando..." loading />
+        <ScrollView contentContainerStyle={styles.content}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </ScrollView>
       </View>
     );
   }
 
   const usdChange = rates.current.usd - rates.previous.usd;
   const eurChange = rates.current.eur - rates.previous.eur;
-  const usdtChange = rates.current.usdt ? rates.current.usdt - (rates.previous.usdt || rates.current.usdt) : 0;
+  const usdtChange = rates.current.usdt - rates.previous.usdt;
+
+  // Determinar si el mercado está abierto (simplificado: entre 8am y 5pm semana LAB)
+  const now = new Date();
+  const hour = now.getHours();
+  const day = now.getDay();
+  const isOpen = day >= 1 && day <= 5 && hour >= 8 && hour < 17;
+
+  const formatDate = (dateStr: string) => {
+    if (!dateStr) return "—";
+    try {
+      const d = new Date(dateStr);
+      return d.toLocaleString("es-VE", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return dateStr;
+    }
+  };
+
+  const lastUpdate = formatDate(rates.current.date);
 
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        <Animated.View entering={FadeInUp.duration(500)}>
-          <PriceCard value={rates.current.usd} change={usdChange} />
+      <Header
+        title="Tasas del día"
+        subtitle={lastUpdate}
+        loading={loading}
+        onRefresh={refresh}
+      />
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={loading}
+            onRefresh={refresh}
+            tintColor={colors.primary}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Dólar BCV */}
+        <Animated.View entering={FadeInDown.duration(400)}>
+          <RateCard
+            currency="DÓLAR BCV"
+            code="USD"
+            icon="attach-money"
+            value={rates.current.usd}
+            change={usdChange}
+            changePercent={rates.changePercentage.usd}
+            color={colors.usdColor}
+          />
         </Animated.View>
 
-        <Animated.View entering={FadeInUp.delay(150)} style={styles.overlapCard}>
-          <EuroCard value={rates.current.eur} change={eurChange} />
+        {/* Euro BCV */}
+        <Animated.View entering={FadeInDown.duration(400).delay(80)}>
+          <RateCard
+            currency="EURO BCV"
+            code="EUR"
+            icon="euro"
+            value={rates.current.eur}
+            change={eurChange}
+            changePercent={rates.changePercentage.eur}
+            color={colors.eurColor}
+          />
         </Animated.View>
 
-        {rates.current.usdt && (
-          <Animated.View entering={FadeInUp.delay(300)} style={styles.overlapCard}>
-            <USDTCard value={rates.current.usdt} change={usdtChange} />
-          </Animated.View>
-        )}
+        {/* USDT Binance P2P */}
+        <Animated.View entering={FadeInDown.duration(400).delay(160)}>
+          <RateCard
+            currency="USDT (P2P)"
+            code="USDT"
+            icon="currency-bitcoin"
+            value={rates.current.usdt}
+            change={usdtChange}
+            changePercent={rates.changePercentage.usdt}
+            color={colors.usdtColor}
+          />
+        </Animated.View>
 
-        {rates.current.usdt && (
-          <Animated.View entering={FadeInUp.delay(450)}>
-            <USDTDiffCard 
-              bcvPrice={rates.current.usd} 
-              usdtPrice={rates.current.usdt} 
-            />
-          </Animated.View>
-        )}
+        {/* Spread BCV vs USDT */}
+        <Animated.View entering={FadeInDown.duration(400).delay(240)}>
+          <SpreadCard
+            bcvPrice={rates.current.usd}
+            usdtPrice={rates.current.usdt}
+          />
+        </Animated.View>
 
-        <MarketStatus open lastUpdate={`Actualizado: ${rates.current.date}`} isUsingCache={isUsingCache} />
+        {/* Estado del mercado */}
+        <Animated.View entering={FadeInDown.duration(400).delay(320)}>
+          <MarketStatus
+            open={isOpen}
+            lastUpdate={lastUpdate}
+            isUsingCache={isUsingCache}
+            error={error}
+          />
+        </Animated.View>
       </ScrollView>
     </View>
   );
@@ -72,13 +143,11 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    flex: 1,
-    paddingHorizontal: 12,
-    justifyContent: "center",
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 32,
     gap: 16,
-    paddingVertical: 24,
-  },
-  overlapCard: {
-    marginTop: -24,
   },
 });
+
+export default HomeScreen;

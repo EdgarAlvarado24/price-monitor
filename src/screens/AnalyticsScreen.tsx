@@ -1,198 +1,518 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native";
-import Animated, { FadeInUp } from "react-native-reanimated";
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
+import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
+import { Header } from "../components/Header";
 import { useRates } from "../hooks/useRates";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+import { formatNumber, formatChange, formatPercent } from "../data/constants";
+import type { RateSnapshot } from "../services/rates.service";
 
 type Period = "1d" | "7d" | "1m" | "3m" | "6m" | "1y";
+type Currency = "usd" | "eur";
 
 const periods = [
-  { key: "1d", label: "1 Día" },
-  { key: "7d", label: "7 Días" },
-  { key: "1m", label: "1 Mes" },
-  { key: "3m", label: "3 Meses" },
-  { key: "6m", label: "6 Meses" },
-  { key: "1y", label: "1 Año" },
+  { key: "1d" as Period, label: "1D" },
+  { key: "7d" as Period, label: "7D" },
+  { key: "1m" as Period, label: "1M" },
+  { key: "3m" as Period, label: "3M" },
+  { key: "6m" as Period, label: "6M" },
+  { key: "1y" as Period, label: "1A" },
 ];
 
-export function AnalyticsScreen() {
-  const { rates, loading } = useRates();
-  const [selectedPeriod, setSelectedPeriod] = useState<Period>("1d");
+interface ChartPoint {
+  price: number;
+  label: string;
+}
 
-  // Generar datos simulados para la gráfica
-  const generateChartData = (period: Period) => {
-    if (!rates) return { prices: [], labels: [] };
+function filterHistoryByPeriod(
+  history: RateSnapshot[],
+  period: Period,
+  currency: Currency
+): ChartPoint[] {
+  if (history.length === 0) return [];
 
-    let prices: number[] = [];
-    let labels: string[] = [];
-
-    switch (period) {
-      case "1d":
-        // Usar datos reales de la API: current y previous
-        prices = [rates.previous.usd, rates.current.usd];
-        labels = ['Ayer', 'Hoy'];
-        break;
-      case "7d":
-        prices = [rates.previous.usd];
-        labels = ['Ayer'];
-        for (let i = 1; i < 7; i++) {
-          const variation = (Math.random() - 0.5) * 0.1; // ±10% diario
-          const price = prices[prices.length - 1] * (1 + variation);
-          prices.push(price);
-          const date = new Date();
-          date.setDate(date.getDate() - (6 - i));
-          labels.push(date.toLocaleDateString('es', { weekday: 'short' }));
-        }
-        break;
-      case "1m":
-        prices = [rates.previous.usd];
-        labels = ['Inicio'];
-        for (let i = 1; i < 30; i++) {
-          const variation = (Math.random() - 0.5) * 0.02; // ±2% diario
-          const price = prices[prices.length - 1] * (1 + variation);
-          prices.push(price);
-          labels.push((i + 1).toString());
-        }
-        break;
-      case "3m":
-        prices = [rates.previous.usd];
-        labels = ['3m atrás'];
-        for (let i = 1; i < 12; i++) {
-          const variation = (Math.random() - 0.5) * 0.05; // ±5% mensual
-          const price = prices[prices.length - 1] * (1 + variation);
-          prices.push(price);
-          const months3 = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-          const currentMonth = new Date().getMonth();
-          labels.push(months3[(currentMonth - 11 + i + 12) % 12]);
-        }
-        break;
-      case "6m":
-        prices = [rates.previous.usd];
-        labels = ['6m atrás'];
-        for (let i = 1; i < 24; i++) {
-          const variation = (Math.random() - 0.5) * 0.03; // ±3% mensual
-          const price = prices[prices.length - 1] * (1 + variation);
-          prices.push(price);
-          const months6 = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-          const currentMonth6 = new Date().getMonth();
-          const monthIndex = (currentMonth6 - 23 + i + 24) % 12;
-          labels.push(months6[monthIndex]);
-        }
-        break;
-      case "1y":
-        prices = [rates.previous.usd];
-        labels = ['1a atrás'];
-        for (let i = 1; i < 12; i++) {
-          const variation = (Math.random() - 0.5) * 0.04; // ±4% mensual
-          const price = prices[prices.length - 1] * (1 + variation);
-          prices.push(price);
-          const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-          const currentMonthY = new Date().getMonth();
-          labels.push(months[(currentMonthY - 11 + i + 12) % 12]);
-        }
-        break;
-    }
-
-    return { prices, labels };
+  const now = Date.now();
+  const msMap: Record<Period, number> = {
+    "1d": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "1m": 30 * 24 * 60 * 60 * 1000,
+    "3m": 90 * 24 * 60 * 60 * 1000,
+    "6m": 180 * 24 * 60 * 60 * 1000,
+    "1y": 365 * 24 * 60 * 60 * 1000,
   };
 
-  const { prices: chartData, labels: chartLabels } = generateChartData(selectedPeriod);
-  const maxPrice = Math.max(...chartData);
-  const minPrice = Math.min(...chartData);
-  const priceRange = maxPrice - minPrice || 1;
-  const isPositive = rates ? rates.current.usd > rates.previous.usd : true;
+  const cutoff = now - msMap[period];
 
-  if (loading || !rates) {
+  // Filtrar puntos dentro del período
+  let points = history.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+
+  // Si no hay suficientes, usar todos los disponibles
+  if (points.length < 2) {
+    points = history;
+  }
+
+  if (points.length < 2) {
+    return [];
+  }
+
+  // Para 1D mostrar puntos cada ~1h; para periodos largos reducir densidad
+  let step = 1;
+  if (period === "1d" && points.length > 24) {
+    step = Math.ceil(points.length / 24);
+  } else if (period === "7d" && points.length > 30) {
+    step = Math.ceil(points.length / 30);
+  } else if (points.length > 50) {
+    step = Math.ceil(points.length / 50);
+  }
+
+  const sampled = points.filter((_, i) => i % step === 0 || i === points.length - 1);
+
+  return sampled.map((s) => {
+    const d = new Date(s.timestamp);
+    let label: string;
+
+    switch (period) {
+      case "1d": {
+        label = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        break;
+      }
+      case "7d": {
+        const days = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+        label = days[d.getDay()];
+        break;
+      }
+      case "1m": {
+        label = String(d.getDate());
+        break;
+      }
+      default: {
+        const months = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+        label = months[d.getMonth()];
+        break;
+      }
+    }
+
+    return {
+      price: currency === "usd" ? s.usd : s.eur,
+      label,
+    };
+  });
+}
+
+function MiniChart({
+  data,
+  width,
+  height,
+}: {
+  data: ChartPoint[];
+  width: number;
+  height: number;
+}) {
+  if (data.length < 2) {
+    return (
+      <View style={{ width, height, justifyContent: "center", alignItems: "center" }}>
+        <Text style={{ color: colors.textDim, fontSize: 11 }}>
+          Datos insuficientes
+        </Text>
+      </View>
+    );
+  }
+
+  const prices = data.map((p) => p.price);
+  const max = Math.max(...prices);
+  const min = Math.min(...prices);
+  const range = max - min || 1;
+  const firstPrice = prices[0];
+  const lastPrice = prices[prices.length - 1];
+  const isUp = lastPrice >= firstPrice;
+  const chartColor = isUp ? colors.green : colors.red;
+  const stepX = width / (data.length - 1);
+
+  const points = data.map((d, i) => ({
+    x: i * stepX,
+    y: ((max - d.price) / range) * height,
+  }));
+
+  return (
+    <View style={{ width, height, position: "relative" }}>
+      {/* Líneas */}
+      {points.slice(1).map((p, i) => {
+        const prev = points[i];
+        const dx = p.x - prev.x;
+        const dy = p.y - prev.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        return (
+          <View
+            key={`line-${i}`}
+            style={{
+              position: "absolute",
+              left: prev.x,
+              top: prev.y,
+              width: len,
+              height: 2,
+              backgroundColor: chartColor,
+              opacity: 0.6,
+              transform: [{ rotate: `${angle}deg` }],
+              transformOrigin: "left center",
+            }}
+          />
+        );
+      })}
+
+      {/* Puntos */}
+      {points.map((p, i) => {
+        const isFirst = i === 0;
+        const isLast = i === points.length - 1;
+        return (
+          <View
+            key={`point-${i}`}
+            style={{
+              position: "absolute",
+              left: p.x - (isFirst || isLast ? 4 : 2),
+              top: p.y - (isFirst || isLast ? 4 : 2),
+              width: isFirst || isLast ? 8 : 4,
+              height: isFirst || isLast ? 8 : 4,
+              borderRadius: isFirst || isLast ? 4 : 2,
+              backgroundColor: isFirst || isLast ? chartColor : "transparent",
+              borderWidth: isFirst || isLast ? 0 : 1,
+              borderColor: chartColor,
+              opacity: isFirst || isLast ? 1 : 0.5,
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
+export function AnalyticsScreen() {
+  const { rates, loading, isUsingCache, error, refresh, history } = useRates();
+  const [selectedPeriod, setSelectedPeriod] = useState<Period>("1d");
+  const [selectedCurrency, setSelectedCurrency] = useState<Currency>("usd");
+
+  const chartData = useMemo(
+    () => filterHistoryByPeriod(history, selectedPeriod, selectedCurrency),
+    [history, selectedPeriod, selectedCurrency]
+  );
+
+  if (!rates && loading) {
     return (
       <View style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.title}>Cargando...</Text>
+        <Header title="Análisis" subtitle="Cargando datos..." loading />
+        <View style={styles.loadingContent}>
+          <Text style={styles.loadingText}>Cargando...</Text>
         </View>
       </View>
     );
   }
 
-  return (
-    <ScrollView style={styles.container}>
-      <View style={styles.content}>
-        <Animated.View entering={FadeInUp.duration(500)}>
-          <Text style={styles.title}>ANÁLISIS</Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInUp.delay(150)} style={styles.currentValue}>
-          <Text style={styles.currentLabel}>DÓLAR ACTUAL</Text>
-          <Text style={styles.currentPrice}>Bs. {rates.current.usd.toFixed(2)}</Text>
-          <Text style={[styles.currentChange, { color: isPositive ? colors.green : colors.red }]}>
-            {isPositive ? "+" : ""}
-            {(rates.current.usd - rates.previous.usd).toFixed(2)} ({((rates.current.usd - rates.previous.usd) / rates.previous.usd * 100).toFixed(2)}%)
-          </Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInUp.delay(300)} style={styles.periodSelector}>
-          {periods.map((period) => (
-            <TouchableOpacity
-              key={period.key}
-              style={[
-                styles.periodButton,
-                selectedPeriod === period.key && styles.periodButtonActive
-              ]}
-              onPress={() => setSelectedPeriod(period.key as Period)}
-            >
-              <Text style={[
-                styles.periodButtonText,
-                selectedPeriod === period.key && styles.periodButtonTextActive
-              ]}>
-                {period.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </Animated.View>
-
-        <Animated.View entering={FadeInUp.delay(450)} style={styles.chartContainer}>
-          <Text style={styles.chartTitle}>EVOLUCIÓN DEL PRECIO</Text>
-          <View style={styles.chart}>
-            {chartData.map((price, index) => {
-              const x = (index / (chartData.length - 1)) * 280;
-              const y = ((maxPrice - price) / priceRange) * 180;
-              return (
-                <View key={`point-${index}`} style={[styles.point, { left: x, top: y }]} />
-              );
-            })}
-            {chartData.slice(1).map((price, index) => {
-              const prevPrice = chartData[index];
-              const x1 = (index / (chartData.length - 1)) * 280 + 3; // centro del punto
-              const y1 = ((maxPrice - prevPrice) / priceRange) * 180 + 3; // centro
-              const x2 = ((index + 1) / (chartData.length - 1)) * 280 + 3;
-              const y2 = ((maxPrice - price) / priceRange) * 180 + 3;
-              const distance = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
-              const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
-              return (
-                <View
-                  key={`line-${index}`}
-                  style={[
-                    styles.line,
-                    {
-                      left: x1 - distance / 2,
-                      top: y1 - 1,
-                      width: distance,
-                      transform: [{ rotate: `${angle}deg` }]
-                    }
-                  ]}
-                />
-              );
-            })}
-          </View>
-          <View style={styles.xAxis}>
-            {chartLabels.filter((_, i) => i % Math.ceil(chartLabels.length / 5) === 0).map((label, i) => (
-              <Text key={i} style={styles.xLabel}>{label}</Text>
-            ))}
-          </View>
-          <View style={styles.yAxis}>
-            <Text style={styles.yLabelHigh}>Bs. {maxPrice.toFixed(0)}</Text>
-            <Text style={styles.yLabelLow}>Bs. {minPrice.toFixed(0)}</Text>
-          </View>
-        </Animated.View>
+  if (!rates) {
+    return (
+      <View style={styles.container}>
+        <Header title="Análisis" subtitle="Sin datos" />
+        <View style={styles.loadingContent}>
+          <Text style={styles.loadingText}>No hay datos disponibles</Text>
+        </View>
       </View>
+    );
+  }
+
+  const selectedBase =
+    selectedCurrency === "usd" ? rates.current.usd : rates.current.eur;
+  const selectedPrev =
+    selectedCurrency === "usd" ? rates.previous.usd : rates.previous.eur;
+  const selectedChange = selectedBase - selectedPrev;
+  const isPositive = selectedChange >= 0;
+
+  const firstPrice = chartData.length > 0 ? chartData[0].price : selectedBase;
+  const lastPrice =
+    chartData.length > 0
+      ? chartData[chartData.length - 1].price
+      : selectedBase;
+  const periodChange = lastPrice - firstPrice;
+  const periodPercent =
+    firstPrice > 0 ? (periodChange / firstPrice) * 100 : 0;
+  const periodIsUp = periodChange >= 0;
+
+  const minPrice =
+    chartData.length > 0
+      ? Math.min(...chartData.map((d) => d.price))
+      : selectedBase;
+  const maxPrice =
+    chartData.length > 0
+      ? Math.max(...chartData.map((d) => d.price))
+      : selectedBase;
+
+  const hasHistory = history.length >= 2;
+
+  return (
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.scrollContent}
+      refreshControl={
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={refresh}
+          tintColor={colors.primary}
+        />
+      }
+      showsVerticalScrollIndicator={false}
+    >
+      <Header
+        title="Análisis"
+        subtitle="Evolución de tasas"
+        loading={loading}
+        onRefresh={refresh}
+      />
+
+      {/* Indicador de datos cacheados */}
+      {isUsingCache && (
+        <View style={styles.cacheBanner}>
+          <MaterialIcons name="offline-bolt" size={14} color={colors.primary} />
+          <Text style={styles.cacheBannerText}>
+            Mostrando datos cacheados
+          </Text>
+        </View>
+      )}
+
+      {/* Selector de moneda */}
+      <View style={styles.currencySelector}>
+        <TouchableOpacity
+          style={[
+            styles.currencyTab,
+            selectedCurrency === "usd" && styles.currencyTabActive,
+          ]}
+          onPress={() => setSelectedCurrency("usd")}
+        >
+          <Text
+            style={[
+              styles.currencyTabText,
+              selectedCurrency === "usd" && styles.currencyTabTextActive,
+            ]}
+          >
+            USD
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.currencyTab,
+            selectedCurrency === "eur" && styles.currencyTabActive,
+          ]}
+          onPress={() => setSelectedCurrency("eur")}
+        >
+          <Text
+            style={[
+              styles.currencyTabText,
+              selectedCurrency === "eur" && styles.currencyTabTextActive,
+            ]}
+          >
+            EUR
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Resumen actual */}
+      <Animated.View entering={FadeInDown.duration(400)} style={styles.summary}>
+        <Text style={styles.currencyLabel}>
+          {selectedCurrency === "usd" ? "DÓLAR BCV" : "EURO BCV"}
+        </Text>
+        <Text style={styles.currentPrice}>
+          Bs. {formatNumber(selectedBase)}
+        </Text>
+        <Text
+          style={[
+            styles.changeText,
+            { color: isPositive ? colors.green : colors.red },
+          ]}
+        >
+          {formatChange(selectedChange)} (
+          {formatPercent((selectedChange / (selectedPrev || 1)) * 100)})
+        </Text>
+        <Text style={styles.prevText}>
+          Anterior: Bs. {formatNumber(selectedPrev)}
+        </Text>
+      </Animated.View>
+
+      {/* Selector de período */}
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(80)}
+        style={styles.periodSelector}
+      >
+        {periods.map((p) => (
+          <TouchableOpacity
+            key={p.key}
+            style={[
+              styles.periodBtn,
+              selectedPeriod === p.key && styles.periodBtnActive,
+            ]}
+            onPress={() => setSelectedPeriod(p.key)}
+          >
+            <Text
+              style={[
+                styles.periodBtnText,
+                selectedPeriod === p.key && styles.periodBtnTextActive,
+              ]}
+            >
+              {p.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </Animated.View>
+
+      {/* Gráfica */}
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(160)}
+        style={styles.chartCard}
+      >
+        <View style={styles.chartHeader}>
+          <View>
+            <Text style={styles.chartTitle}>TASA PROMEDIO</Text>
+            <Text style={styles.chartPeriod}>
+              {selectedPeriod === "1d"
+                ? "HOY"
+                : `ÚLTIMOS ${selectedPeriod.toUpperCase()}`}
+            </Text>
+          </View>
+          <View style={styles.chartStats}>
+            {hasHistory && (
+              <>
+                <Text
+                  style={[
+                    styles.chartStatValue,
+                    { color: periodIsUp ? colors.green : colors.red },
+                  ]}
+                >
+                  {formatPercent(periodPercent)}
+                </Text>
+                <Text style={styles.chartStatLabel}>Variación</Text>
+              </>
+            )}
+          </View>
+        </View>
+
+        <View style={styles.chartArea}>
+          {/* Y-axis labels */}
+          {hasHistory && (
+            <View style={styles.yAxis}>
+              <Text style={styles.axisLabel}>
+                Bs. {formatNumber(maxPrice, 0)}
+              </Text>
+              <Text style={styles.axisLabel}>
+                Bs. {formatNumber(minPrice, 0)}
+              </Text>
+            </View>
+          )}
+
+          {/* Chart */}
+          <MiniChart data={chartData} width={260} height={160} />
+        </View>
+
+        {/* X-axis labels */}
+        {hasHistory && chartData.length > 0 && (
+          <View style={styles.xAxis}>
+            {chartData
+              .filter(
+                (_, i) =>
+                  i %
+                    Math.max(
+                      1,
+                      Math.floor(chartData.length / 5)
+                    ) ===
+                  0
+              )
+              .map((d, i) => (
+                <Text key={i} style={styles.xLabel}>
+                  {d.label}
+                </Text>
+              ))}
+          </View>
+        )}
+
+        {!hasHistory && (
+          <View style={styles.noDataNotice}>
+            <MaterialIcons
+              name="info-outline"
+              size={14}
+              color={colors.textMuted}
+            />
+            <Text style={styles.noDataText}>
+              Los datos históricos se acumulan con cada actualización. Vuelve
+              más tarde para ver la evolución.
+            </Text>
+          </View>
+        )}
+      </Animated.View>
+
+      {/* Tabla de monedas */}
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(240)}
+        style={styles.ratesTable}
+      >
+        <Text style={styles.tableTitle}>RESUMEN DE TASAS</Text>
+
+        {[
+          {
+            code: "USD",
+            name: "Dólar BCV",
+            price: rates.current.usd,
+            change: rates.current.usd - rates.previous.usd,
+            pct: rates.changePercentage.usd,
+            color: colors.usdColor,
+          },
+          {
+            code: "EUR",
+            name: "Euro BCV",
+            price: rates.current.eur,
+            change: rates.current.eur - rates.previous.eur,
+            pct: rates.changePercentage.eur,
+            color: colors.eurColor,
+          },
+          {
+            code: "USDT",
+            name: "USDT (P2P)",
+            price: rates.current.usdt,
+            change: rates.current.usdt - rates.previous.usdt,
+            pct: rates.changePercentage.usdt,
+            color: colors.usdtColor,
+          },
+        ].map((item, i) => {
+          const isUp = item.change >= 0;
+          return (
+            <View
+              key={item.code}
+              style={[styles.tableRow, i < 2 && styles.tableRowBorder]}
+            >
+              <View style={styles.tableLeft}>
+                <View
+                  style={[styles.tableDot, { backgroundColor: item.color }]}
+                />
+                <View>
+                  <Text style={styles.tableCode}>{item.code}</Text>
+                  <Text style={styles.tableName}>{item.name}</Text>
+                </View>
+              </View>
+              <View style={styles.tableRight}>
+                <Text style={styles.tablePrice}>
+                  Bs. {formatNumber(item.price)}
+                </Text>
+                <Text
+                  style={[
+                    styles.tableChange,
+                    { color: isUp ? colors.green : colors.red },
+                  ]}
+                >
+                  {formatChange(item.change)}
+                </Text>
+              </View>
+            </View>
+          );
+        })}
+      </Animated.View>
+
+      {/* Espacio para navegación */}
+      <View style={{ height: 32 }} />
     </ScrollView>
   );
 }
@@ -202,122 +522,248 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  content: {
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 100,
+  scrollContent: {
+    paddingBottom: 24,
   },
-  title: {
-    color: "#fff",
-    fontSize: 24,
-    fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 32,
-    letterSpacing: 2,
-  },
-  currentValue: {
-    backgroundColor: colors.card,
-    borderRadius: 20,
-    padding: 24,
+  loadingContent: {
+    flex: 1,
+    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 24,
+    paddingVertical: 60,
   },
-  currentLabel: {
+  loadingText: {
     color: colors.textMuted,
-    fontSize: 12,
-    letterSpacing: 1,
-    fontWeight: "700",
-    marginBottom: 8,
+    fontSize: 14,
   },
-  currentPrice: {
-    color: "#fff",
-    fontSize: 48,
-    fontWeight: "800",
-    marginBottom: 8,
+  cacheBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
+    marginHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: colors.primaryLight,
+    marginBottom: 12,
   },
-  currentChange: {
-    fontSize: 16,
+  cacheBannerText: {
+    color: colors.primary,
+    fontSize: 11,
     fontWeight: "600",
   },
-  periodSelector: {
+  currencySelector: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    justifyContent: "space-between",
-    marginBottom: 24,
+    marginHorizontal: 20,
+    gap: 8,
+    marginBottom: 16,
   },
-  periodButton: {
-    backgroundColor: "rgba(30,30,35,0.5)",
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-    minWidth: "30%",
+  currencyTab: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: colors.surfaceLight,
     alignItems: "center",
   },
-  periodButtonActive: {
+  currencyTabActive: {
     backgroundColor: colors.primary,
   },
-  periodButtonText: {
+  currencyTabText: {
     color: colors.textMuted,
     fontSize: 14,
     fontWeight: "600",
   },
-  periodButtonTextActive: {
+  currencyTabTextActive: {
     color: "#fff",
+    fontWeight: "700",
   },
-  chartContainer: {
+  summary: {
+    marginHorizontal: 20,
     backgroundColor: colors.card,
     borderRadius: 20,
-    padding: 24,
+    padding: 20,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 16,
+  },
+  currencyLabel: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 4,
+  },
+  currentPrice: {
+    color: colors.text,
+    fontSize: 40,
+    fontWeight: "800",
+  },
+  changeText: {
+    fontSize: 14,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  prevText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    marginTop: 6,
+  },
+  periodSelector: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    gap: 6,
+    marginBottom: 16,
+  },
+  periodBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceLight,
+    alignItems: "center",
+  },
+  periodBtnActive: {
+    backgroundColor: colors.primaryLight,
+  },
+  periodBtnText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  periodBtnTextActive: {
+    color: colors.primary,
+  },
+  chartCard: {
+    marginHorizontal: 20,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 16,
+  },
+  chartHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
   },
   chartTitle: {
-    color: "#fff",
-    fontSize: 18,
+    color: colors.textMuted,
+    fontSize: 9,
     fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 16,
+    letterSpacing: 1.5,
   },
-  chart: {
-    height: 200,
-    marginBottom: 16,
-    position: "relative",
+  chartPeriod: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 2,
   },
-  point: {
-    position: "absolute",
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
+  chartStats: {
+    alignItems: "flex-end",
   },
-  line: {
-    position: "absolute",
-    height: 2,
-    backgroundColor: colors.primary,
-    opacity: 0.7,
+  chartStatValue: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  chartStatLabel: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: "600",
+  },
+  chartArea: {
+    flexDirection: "row",
+    gap: 8,
+    height: 160,
+  },
+  yAxis: {
+    justifyContent: "space-between",
+    paddingVertical: 2,
+  },
+  axisLabel: {
+    color: colors.textMuted,
+    fontSize: 9,
   },
   xAxis: {
     flexDirection: "row",
     justifyContent: "space-between",
     marginTop: 8,
+    paddingLeft: 30,
   },
   xLabel: {
     color: colors.textMuted,
+    fontSize: 9,
+  },
+  noDataNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 4,
+  },
+  noDataText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    flex: 1,
+    lineHeight: 16,
+  },
+  ratesTable: {
+    marginHorizontal: 20,
+    backgroundColor: colors.card,
+    borderRadius: 20,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  tableTitle: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    marginBottom: 16,
+  },
+  tableRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+  },
+  tableRowBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  tableLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  tableDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  tableCode: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  tableName: {
+    color: colors.textMuted,
     fontSize: 10,
   },
-  yAxis: {
-    position: "absolute",
-    right: 0,
-    top: 0,
-    height: 200,
-    justifyContent: "space-between",
+  tableRight: {
     alignItems: "flex-end",
   },
-  yLabelHigh: {
-    color: colors.textMuted,
-    fontSize: 10,
+  tablePrice: {
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
   },
-  yLabelLow: {
-    color: colors.textMuted,
-    fontSize: 10,
+  tableChange: {
+    fontSize: 11,
+    fontWeight: "600",
+    marginTop: 2,
   },
 });
+
+export default AnalyticsScreen;
