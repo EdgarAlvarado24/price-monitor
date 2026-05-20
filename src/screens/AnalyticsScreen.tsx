@@ -1,13 +1,15 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, RefreshControl } from "react-native";
-import Animated, { FadeInDown, FadeIn } from "react-native-reanimated";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { MaterialIcons } from "@expo/vector-icons";
 import { colors } from "../theme/colors";
 import { Header } from "../components/Header";
 import { useRates } from "../hooks/useRates";
 import { useState, useMemo } from "react";
 import { formatNumber, formatChange, formatPercent } from "../data/constants";
+import type { RateSnapshot } from "../services/rates.service";
 
 type Period = "1d" | "7d" | "1m" | "3m" | "6m" | "1y";
+type Currency = "usd" | "eur";
 
 const periods = [
   { key: "1d" as Period, label: "1D" },
@@ -23,85 +25,101 @@ interface ChartPoint {
   label: string;
 }
 
-function generateChartData(period: Period, basePrice: number): ChartPoint[] {
-  const points: ChartPoint[] = [];
-  let n: number;
-  let volatility: number;
+function filterHistoryByPeriod(
+  history: RateSnapshot[],
+  period: Period,
+  currency: Currency
+): ChartPoint[] {
+  if (history.length === 0) return [];
 
-  switch (period) {
-    case "1d":
-      n = 24; // cada hora
-      volatility = 0.001;
-      break;
-    case "7d":
-      n = 7;
-      volatility = 0.008;
-      break;
-    case "1m":
-      n = 30;
-      volatility = 0.015;
-      break;
-    case "3m":
-      n = 12;
-      volatility = 0.025;
-      break;
-    case "6m":
-      n = 24;
-      volatility = 0.03;
-      break;
-    case "1y":
-      n = 12;
-      volatility = 0.04;
-      break;
+  const now = Date.now();
+  const msMap: Record<Period, number> = {
+    "1d": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "1m": 30 * 24 * 60 * 60 * 1000,
+    "3m": 90 * 24 * 60 * 60 * 1000,
+    "6m": 180 * 24 * 60 * 60 * 1000,
+    "1y": 365 * 24 * 60 * 60 * 1000,
+  };
+
+  const cutoff = now - msMap[period];
+
+  // Filtrar puntos dentro del período
+  let points = history.filter((s) => new Date(s.timestamp).getTime() >= cutoff);
+
+  // Si no hay suficientes, usar todos los disponibles
+  if (points.length < 2) {
+    points = history;
   }
 
-  let price = basePrice * (1 - volatility * 2);
-  const now = new Date();
+  if (points.length < 2) {
+    return [];
+  }
 
-  for (let i = 0; i < n; i++) {
-    const change = price * (Math.random() - 0.48) * volatility;
-    price += change;
-    price = Math.max(price, basePrice * 0.5);
+  // Para 1D mostrar puntos cada ~1h; para periodos largos reducir densidad
+  let step = 1;
+  if (period === "1d" && points.length > 24) {
+    step = Math.ceil(points.length / 24);
+  } else if (period === "7d" && points.length > 30) {
+    step = Math.ceil(points.length / 30);
+  } else if (points.length > 50) {
+    step = Math.ceil(points.length / 50);
+  }
 
+  const sampled = points.filter((_, i) => i % step === 0 || i === points.length - 1);
+
+  return sampled.map((s) => {
+    const d = new Date(s.timestamp);
     let label: string;
+
     switch (period) {
       case "1d": {
-        const h = (now.getHours() - (n - 1 - i) + 24) % 24;
-        label = `${h}:00`;
+        label = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
         break;
       }
-      case "7d":
+      case "7d": {
+        const days = ["dom", "lun", "mar", "mié", "jue", "vie", "sáb"];
+        label = days[d.getDay()];
+        break;
+      }
       case "1m": {
-        const d = new Date(now);
-        d.setDate(d.getDate() - (n - 1 - i));
-        const days = ["dom","lun","mar","mié","jue","vie","sáb"];
-        label = period === "7d" ? days[d.getDay()] : String(d.getDate());
+        label = String(d.getDate());
         break;
       }
       default: {
         const months = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
-        const d2 = new Date(now);
-        d2.setMonth(d2.getMonth() - (n - 1 - i));
-        label = months[d2.getMonth()];
+        label = months[d.getMonth()];
         break;
       }
     }
 
-    points.push({ price, label });
-  }
-
-  // Asegurar que el último punto es el precio actual
-  if (points.length > 0) {
-    points[points.length - 1].price = basePrice;
-  }
-
-  return points;
+    return {
+      price: currency === "usd" ? s.usd : s.eur,
+      label,
+    };
+  });
 }
 
-function MiniChart({ data, width, height }: { data: ChartPoint[]; width: number; height: number }) {
-  if (data.length === 0) return null;
+function MiniChart({
+  data,
+  width,
+  height,
+}: {
+  data: ChartPoint[];
+  width: number;
+  height: number;
+}) {
+  if (data.length < 2) {
+    return (
+      <View style={{ width, height, justifyContent: "center", alignItems: "center" }}>
+        <Text style={{ color: colors.textDim, fontSize: 11 }}>
+          Datos insuficientes
+        </Text>
+      </View>
+    );
+  }
 
-  const prices = data.map(p => p.price);
+  const prices = data.map((p) => p.price);
   const max = Math.max(...prices);
   const min = Math.min(...prices);
   const range = max - min || 1;
@@ -111,7 +129,6 @@ function MiniChart({ data, width, height }: { data: ChartPoint[]; width: number;
   const chartColor = isUp ? colors.green : colors.red;
   const stepX = width / (data.length - 1);
 
-  // Points
   const points = data.map((d, i) => ({
     x: i * stepX,
     y: ((max - d.price) / range) * height,
@@ -119,7 +136,7 @@ function MiniChart({ data, width, height }: { data: ChartPoint[]; width: number;
 
   return (
     <View style={{ width, height, position: "relative" }}>
-      {/* Líneas conectando puntos */}
+      {/* Líneas */}
       {points.slice(1).map((p, i) => {
         const prev = points[i];
         const dx = p.x - prev.x;
@@ -171,15 +188,14 @@ function MiniChart({ data, width, height }: { data: ChartPoint[]; width: number;
 }
 
 export function AnalyticsScreen() {
-  const { rates, loading, isUsingCache, error, refresh } = useRates();
+  const { rates, loading, isUsingCache, error, refresh, history } = useRates();
   const [selectedPeriod, setSelectedPeriod] = useState<Period>("1d");
-  const [selectedCurrency, setSelectedCurrency] = useState<"usd" | "eur">("usd");
+  const [selectedCurrency, setSelectedCurrency] = useState<Currency>("usd");
 
-  const chartData = useMemo(() => {
-    if (!rates) return [];
-    const basePrice = selectedCurrency === "usd" ? rates.current.usd : rates.current.eur;
-    return generateChartData(selectedPeriod, basePrice);
-  }, [rates, selectedPeriod, selectedCurrency]);
+  const chartData = useMemo(
+    () => filterHistoryByPeriod(history, selectedPeriod, selectedCurrency),
+    [history, selectedPeriod, selectedCurrency]
+  );
 
   if (!rates && loading) {
     return (
@@ -203,26 +219,44 @@ export function AnalyticsScreen() {
     );
   }
 
-  const selectedBase = selectedCurrency === "usd" ? rates.current.usd : rates.current.eur;
-  const selectedPrev = selectedCurrency === "usd" ? rates.previous.usd : rates.previous.eur;
+  const selectedBase =
+    selectedCurrency === "usd" ? rates.current.usd : rates.current.eur;
+  const selectedPrev =
+    selectedCurrency === "usd" ? rates.previous.usd : rates.previous.eur;
   const selectedChange = selectedBase - selectedPrev;
   const isPositive = selectedChange >= 0;
 
   const firstPrice = chartData.length > 0 ? chartData[0].price : selectedBase;
-  const lastPrice = chartData.length > 0 ? chartData[chartData.length - 1].price : selectedBase;
+  const lastPrice =
+    chartData.length > 0
+      ? chartData[chartData.length - 1].price
+      : selectedBase;
   const periodChange = lastPrice - firstPrice;
-  const periodPercent = firstPrice > 0 ? (periodChange / firstPrice) * 100 : 0;
+  const periodPercent =
+    firstPrice > 0 ? (periodChange / firstPrice) * 100 : 0;
   const periodIsUp = periodChange >= 0;
 
-  const minPrice = chartData.length > 0 ? Math.min(...chartData.map(d => d.price)) : 0;
-  const maxPrice = chartData.length > 0 ? Math.max(...chartData.map(d => d.price)) : 0;
+  const minPrice =
+    chartData.length > 0
+      ? Math.min(...chartData.map((d) => d.price))
+      : selectedBase;
+  const maxPrice =
+    chartData.length > 0
+      ? Math.max(...chartData.map((d) => d.price))
+      : selectedBase;
+
+  const hasHistory = history.length >= 2;
 
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       refreshControl={
-        <RefreshControl refreshing={loading} onRefresh={refresh} tintColor={colors.primary} />
+        <RefreshControl
+          refreshing={loading}
+          onRefresh={refresh}
+          tintColor={colors.primary}
+        />
       }
       showsVerticalScrollIndicator={false}
     >
@@ -233,21 +267,47 @@ export function AnalyticsScreen() {
         onRefresh={refresh}
       />
 
+      {/* Indicador de datos cacheados */}
+      {isUsingCache && (
+        <View style={styles.cacheBanner}>
+          <MaterialIcons name="offline-bolt" size={14} color={colors.primary} />
+          <Text style={styles.cacheBannerText}>
+            Mostrando datos cacheados
+          </Text>
+        </View>
+      )}
+
       {/* Selector de moneda */}
       <View style={styles.currencySelector}>
         <TouchableOpacity
-          style={[styles.currencyTab, selectedCurrency === "usd" && styles.currencyTabActive]}
+          style={[
+            styles.currencyTab,
+            selectedCurrency === "usd" && styles.currencyTabActive,
+          ]}
           onPress={() => setSelectedCurrency("usd")}
         >
-          <Text style={[styles.currencyTabText, selectedCurrency === "usd" && styles.currencyTabTextActive]}>
+          <Text
+            style={[
+              styles.currencyTabText,
+              selectedCurrency === "usd" && styles.currencyTabTextActive,
+            ]}
+          >
             USD
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.currencyTab, selectedCurrency === "eur" && styles.currencyTabActive]}
+          style={[
+            styles.currencyTab,
+            selectedCurrency === "eur" && styles.currencyTabActive,
+          ]}
           onPress={() => setSelectedCurrency("eur")}
         >
-          <Text style={[styles.currencyTabText, selectedCurrency === "eur" && styles.currencyTabTextActive]}>
+          <Text
+            style={[
+              styles.currencyTabText,
+              selectedCurrency === "eur" && styles.currencyTabTextActive,
+            ]}
+          >
             EUR
           </Text>
         </TouchableOpacity>
@@ -258,22 +318,43 @@ export function AnalyticsScreen() {
         <Text style={styles.currencyLabel}>
           {selectedCurrency === "usd" ? "DÓLAR BCV" : "EURO BCV"}
         </Text>
-        <Text style={styles.currentPrice}>Bs. {formatNumber(selectedBase)}</Text>
-        <Text style={[styles.changeText, { color: isPositive ? colors.green : colors.red }]}>
-          {formatChange(selectedChange)} ({formatPercent((selectedChange / selectedPrev) * 100)})
+        <Text style={styles.currentPrice}>
+          Bs. {formatNumber(selectedBase)}
         </Text>
-        <Text style={styles.prevText}>Anterior: Bs. {formatNumber(selectedPrev)}</Text>
+        <Text
+          style={[
+            styles.changeText,
+            { color: isPositive ? colors.green : colors.red },
+          ]}
+        >
+          {formatChange(selectedChange)} (
+          {formatPercent((selectedChange / (selectedPrev || 1)) * 100)})
+        </Text>
+        <Text style={styles.prevText}>
+          Anterior: Bs. {formatNumber(selectedPrev)}
+        </Text>
       </Animated.View>
 
       {/* Selector de período */}
-      <Animated.View entering={FadeInDown.duration(400).delay(80)} style={styles.periodSelector}>
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(80)}
+        style={styles.periodSelector}
+      >
         {periods.map((p) => (
           <TouchableOpacity
             key={p.key}
-            style={[styles.periodBtn, selectedPeriod === p.key && styles.periodBtnActive]}
+            style={[
+              styles.periodBtn,
+              selectedPeriod === p.key && styles.periodBtnActive,
+            ]}
             onPress={() => setSelectedPeriod(p.key)}
           >
-            <Text style={[styles.periodBtnText, selectedPeriod === p.key && styles.periodBtnTextActive]}>
+            <Text
+              style={[
+                styles.periodBtnText,
+                selectedPeriod === p.key && styles.periodBtnTextActive,
+              ]}
+            >
               {p.label}
             </Text>
           </TouchableOpacity>
@@ -281,63 +362,147 @@ export function AnalyticsScreen() {
       </Animated.View>
 
       {/* Gráfica */}
-      <Animated.View entering={FadeInDown.duration(400).delay(160)} style={styles.chartCard}>
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(160)}
+        style={styles.chartCard}
+      >
         <View style={styles.chartHeader}>
           <View>
             <Text style={styles.chartTitle}>TASA PROMEDIO</Text>
             <Text style={styles.chartPeriod}>
-              {selectedPeriod === "1d" ? "HOY" : `ÚLTIMOS ${selectedPeriod.toUpperCase()}`}
+              {selectedPeriod === "1d"
+                ? "HOY"
+                : `ÚLTIMOS ${selectedPeriod.toUpperCase()}`}
             </Text>
           </View>
           <View style={styles.chartStats}>
-            <Text style={[styles.chartStatValue, { color: periodIsUp ? colors.green : colors.red }]}>
-              {formatPercent(periodPercent)}
-            </Text>
-            <Text style={styles.chartStatLabel}>Variación</Text>
+            {hasHistory && (
+              <>
+                <Text
+                  style={[
+                    styles.chartStatValue,
+                    { color: periodIsUp ? colors.green : colors.red },
+                  ]}
+                >
+                  {formatPercent(periodPercent)}
+                </Text>
+                <Text style={styles.chartStatLabel}>Variación</Text>
+              </>
+            )}
           </View>
         </View>
 
         <View style={styles.chartArea}>
           {/* Y-axis labels */}
-          <View style={styles.yAxis}>
-            <Text style={styles.axisLabel}>Bs. {formatNumber(maxPrice, 0)}</Text>
-            <Text style={styles.axisLabel}>Bs. {formatNumber(minPrice, 0)}</Text>
-          </View>
+          {hasHistory && (
+            <View style={styles.yAxis}>
+              <Text style={styles.axisLabel}>
+                Bs. {formatNumber(maxPrice, 0)}
+              </Text>
+              <Text style={styles.axisLabel}>
+                Bs. {formatNumber(minPrice, 0)}
+              </Text>
+            </View>
+          )}
 
           {/* Chart */}
           <MiniChart data={chartData} width={260} height={160} />
         </View>
 
         {/* X-axis labels */}
-        <View style={styles.xAxis}>
-          {chartData.filter((_, i) => i % Math.max(1, Math.floor(chartData.length / 5)) === 0).map((d, i) => (
-            <Text key={i} style={styles.xLabel}>{d.label}</Text>
-          ))}
-        </View>
+        {hasHistory && chartData.length > 0 && (
+          <View style={styles.xAxis}>
+            {chartData
+              .filter(
+                (_, i) =>
+                  i %
+                    Math.max(
+                      1,
+                      Math.floor(chartData.length / 5)
+                    ) ===
+                  0
+              )
+              .map((d, i) => (
+                <Text key={i} style={styles.xLabel}>
+                  {d.label}
+                </Text>
+              ))}
+          </View>
+        )}
+
+        {!hasHistory && (
+          <View style={styles.noDataNotice}>
+            <MaterialIcons
+              name="info-outline"
+              size={14}
+              color={colors.textMuted}
+            />
+            <Text style={styles.noDataText}>
+              Los datos históricos se acumulan con cada actualización. Vuelve
+              más tarde para ver la evolución.
+            </Text>
+          </View>
+        )}
       </Animated.View>
 
       {/* Tabla de monedas */}
-      <Animated.View entering={FadeInDown.duration(400).delay(240)} style={styles.ratesTable}>
+      <Animated.View
+        entering={FadeInDown.duration(400).delay(240)}
+        style={styles.ratesTable}
+      >
         <Text style={styles.tableTitle}>RESUMEN DE TASAS</Text>
 
         {[
-          { code: "USD", name: "Dólar BCV", price: rates.current.usd, change: rates.current.usd - rates.previous.usd, pct: rates.changePercentage.usd, color: colors.usdColor },
-          { code: "EUR", name: "Euro BCV", price: rates.current.eur, change: rates.current.eur - rates.previous.eur, pct: rates.changePercentage.eur, color: colors.eurColor },
-          { code: "USDT", name: "USDT (P2P)", price: rates.current.usdt, change: rates.current.usdt - rates.previous.usdt, pct: rates.changePercentage.usdt, color: colors.usdtColor },
+          {
+            code: "USD",
+            name: "Dólar BCV",
+            price: rates.current.usd,
+            change: rates.current.usd - rates.previous.usd,
+            pct: rates.changePercentage.usd,
+            color: colors.usdColor,
+          },
+          {
+            code: "EUR",
+            name: "Euro BCV",
+            price: rates.current.eur,
+            change: rates.current.eur - rates.previous.eur,
+            pct: rates.changePercentage.eur,
+            color: colors.eurColor,
+          },
+          {
+            code: "USDT",
+            name: "USDT (P2P)",
+            price: rates.current.usdt,
+            change: rates.current.usdt - rates.previous.usdt,
+            pct: rates.changePercentage.usdt,
+            color: colors.usdtColor,
+          },
         ].map((item, i) => {
           const isUp = item.change >= 0;
           return (
-            <View key={item.code} style={[styles.tableRow, i < 2 && styles.tableRowBorder]}>
+            <View
+              key={item.code}
+              style={[styles.tableRow, i < 2 && styles.tableRowBorder]}
+            >
               <View style={styles.tableLeft}>
-                <View style={[styles.tableDot, { backgroundColor: item.color }]} />
+                <View
+                  style={[styles.tableDot, { backgroundColor: item.color }]}
+                />
                 <View>
                   <Text style={styles.tableCode}>{item.code}</Text>
                   <Text style={styles.tableName}>{item.name}</Text>
                 </View>
               </View>
               <View style={styles.tableRight}>
-                <Text style={styles.tablePrice}>Bs. {formatNumber(item.price)}</Text>
-                <Text style={[styles.tableChange, { color: isUp ? colors.green : colors.red }]}>
+                <Text style={styles.tablePrice}>
+                  Bs. {formatNumber(item.price)}
+                </Text>
+                <Text
+                  style={[
+                    styles.tableChange,
+                    { color: isUp ? colors.green : colors.red },
+                  ]}
+                >
                   {formatChange(item.change)}
                 </Text>
               </View>
@@ -369,6 +534,22 @@ const styles = StyleSheet.create({
   loadingText: {
     color: colors.textMuted,
     fontSize: 14,
+  },
+  cacheBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 6,
+    marginHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: colors.primaryLight,
+    marginBottom: 12,
+  },
+  cacheBannerText: {
+    color: colors.primary,
+    fontSize: 11,
+    fontWeight: "600",
   },
   currencySelector: {
     flexDirection: "row",
@@ -513,6 +694,19 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 9,
   },
+  noDataNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 6,
+    marginTop: 12,
+    paddingHorizontal: 4,
+  },
+  noDataText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    flex: 1,
+    lineHeight: 16,
+  },
   ratesTable: {
     marginHorizontal: 20,
     backgroundColor: colors.card,
@@ -551,20 +745,19 @@ const styles = StyleSheet.create({
   tableCode: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   tableName: {
     color: colors.textMuted,
-    fontSize: 11,
-    marginTop: 1,
+    fontSize: 10,
   },
   tableRight: {
     alignItems: "flex-end",
   },
   tablePrice: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: "700",
+    color: colors.textSecondary,
+    fontSize: 13,
+    fontWeight: "600",
   },
   tableChange: {
     fontSize: 11,

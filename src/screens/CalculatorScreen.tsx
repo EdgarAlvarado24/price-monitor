@@ -1,15 +1,15 @@
-import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Modal, FlatList, Pressable, TextInput } from "react-native";
 import Animated, { FadeInDown, FadeIn } from "react-native-reanimated";
 import { MaterialIcons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { colors } from "../theme/colors";
 import { Header } from "../components/Header";
 import { useRates } from "../hooks/useRates";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ConversionType, RatesData } from "../types/rates";
 import { conversionOptions, formatNumber } from "../data/constants";
 
-/** Parsea string formato venezolano a número */
+/** Parsea string formato venezolano a número (acepta . y , como decimal) */
 function parseNum(s: string): number | null {
   if (!s || /^[.,\s]*$/.test(s)) return null;
   let n = s.trim();
@@ -29,6 +29,21 @@ function parseNum(s: string): number | null {
   return isNaN(num) ? null : num;
 }
 
+/** Normaliza el input al formato venezolano (coma como decimal) */
+function normalizeDecimalInput(text: string): string {
+  if (text.includes(",") && text.includes(".")) {
+    return text.replace(/\./g, "").replace(/,.*$/, "");
+  }
+  if (text.includes(".") && !text.includes(",")) {
+    const parts = text.split(".");
+    if (parts.length === 2 && parts[0].length <= 3 && parts[1].length === 3) {
+      return text.replace(".", "");
+    }
+    return text.replace(".", ",");
+  }
+  return text;
+}
+
 export function CalculatorScreen() {
   const { rates, loading, isUsingCache, error, refresh } = useRates();
   const [conversionType, setConversionType] = useState<ConversionType>("dolar_bcv");
@@ -38,12 +53,14 @@ export function CalculatorScreen() {
   const [divisaInput, setDivisaInput] = useState("");
   const [activeField, setActiveField] = useState<"bs" | "divisa">("bs");
 
+  const bsRef = useRef<TextInput>(null);
+  const divisaRef = useRef<TextInput>(null);
+
   const selectedOption = conversionOptions.find(opt => opt.key === conversionType)!;
   const rate = rates
     ? Number(rates.current[selectedOption.rateKey as keyof RatesData["current"]]) || 0
     : 0;
 
-  // Recalcular cuando cambia la tasa (por cambio de conversionType)
   const recalc = useCallback((field: "bs" | "divisa", raw: string, currentRate: number) => {
     if (!raw) {
       if (field === "bs") {
@@ -56,48 +73,74 @@ export function CalculatorScreen() {
     const num = parseNum(raw);
     if (num === null || num < 0) return;
     if (field === "bs") {
-      setDivisaInput((num / currentRate).toFixed(2));
+      setDivisaInput(formatNum((num / currentRate).toFixed(2)));
     } else {
-      setBsInput((num * currentRate).toFixed(2));
+      setBsInput(formatNum((num * currentRate).toFixed(2)));
     }
   }, []);
 
-  const handleKeyPress = useCallback((key: string) => {
-    const current = activeField === "bs" ? bsInput : divisaInput;
-    let newVal: string;
-    if (key === "backspace") {
-      newVal = current.slice(0, -1);
-    } else if (key === "." || key === ",") {
-      // Solo permitir un separador decimal
-      if (current.includes(",") || current.includes(".")) return;
-      newVal = current + ","; // Siempre usar coma como decimal
-    } else if (/^[0-9]$/.test(key)) {
-      newVal = current + key;
-    } else {
-      return;
+  /** Formatea un número como string manteniendo el separador "," */
+  function formatNum(s: string): string {
+    return s.replace(".", ",");
+  }
+
+  // Recalcular cuando cambia el tipo de conversión
+  const prevRateKeyRef = useRef(selectedOption.rateKey);
+  useEffect(() => {
+    if (prevRateKeyRef.current !== selectedOption.rateKey) {
+      prevRateKeyRef.current = selectedOption.rateKey;
+      if (!bsInput && !divisaInput) return;
+      if (activeField === "bs") {
+        const num = parseNum(bsInput);
+        if (num !== null && rate > 0) {
+          setDivisaInput(formatNum((num / rate).toFixed(2)));
+        }
+      } else {
+        const num = parseNum(divisaInput);
+        if (num !== null && rate > 0) {
+          setBsInput(formatNum((num * rate).toFixed(2)));
+        }
+      }
     }
-    if (activeField === "bs") {
-      setBsInput(newVal);
-      recalc("bs", newVal, rate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOption.rateKey]);
+
+  const handleChangeText = useCallback((field: "bs" | "divisa", text: string) => {
+    // Permitir solo dígitos, coma y punto
+    const cleaned = text.replace(/[^0-9,.]/g, "");
+    // Solo permitir un separador decimal
+    const parts = cleaned.split(/[,.]/);
+    if (parts.length > 2) return; // más de un separador
+    const normalized = normalizeDecimalInput(cleaned);
+
+    if (field === "bs") {
+      setBsInput(normalized);
+      recalc("bs", normalized, rate);
     } else {
-      setDivisaInput(newVal);
-      recalc("divisa", newVal, rate);
+      setDivisaInput(normalized);
+      recalc("divisa", normalized, rate);
     }
-  }, [activeField, bsInput, divisaInput, rate, recalc]);
+  }, [rate, recalc]);
 
   const handleClear = useCallback(() => {
     setBsInput("");
     setDivisaInput("");
     setActiveField("bs");
+    bsRef.current?.focus();
   }, []);
 
-  // Formato display: si hay input mostrar el raw (para edición), si no placeholder
-  const bsDisplay = bsInput || "";
-  const divisaDisplay = divisaInput || "";
-
-  // Valor calculado para mostrar debajo
-  const calcBs = bsInput ? parseNum(bsInput) : null;
-  const calcDivisa = divisaInput ? parseNum(divisaInput) : null;
+  const handleClearField = useCallback((field: "bs" | "divisa") => {
+    if (field === "bs") {
+      setBsInput("");
+      setDivisaInput("");
+      bsRef.current?.focus();
+    } else {
+      setDivisaInput("");
+      setBsInput("");
+      divisaRef.current?.focus();
+    }
+    setActiveField(field);
+  }, []);
 
   if (loading || !rates) {
     return (
@@ -118,13 +161,12 @@ export function CalculatorScreen() {
     if (numericValue) {
       const num = parseFloat(numericValue);
       if (!isNaN(num) && num >= 0) {
+        const raw = num % 1 === 0 ? String(num) : numericValue;
         if (activeField === "bs") {
-          const raw = num % 1 === 0 ? String(num) : numericValue;
-          setBsInput(raw);
+          setBsInput(raw.replace(".", ","));
           recalc("bs", raw, rate);
         } else {
-          const raw = num % 1 === 0 ? String(num) : numericValue;
-          setDivisaInput(raw);
+          setDivisaInput(raw.replace(".", ","));
           recalc("divisa", raw, rate);
         }
       }
@@ -189,36 +231,74 @@ export function CalculatorScreen() {
           </View>
 
           {/* Bs INPUT */}
-          <TouchableOpacity
+          <Pressable
             style={[styles.inputSection, activeField === "bs" && styles.inputSectionActive]}
-            onPress={() => setActiveField("bs")}
-            activeOpacity={0.8}
+            onPress={() => {
+              setActiveField("bs");
+              bsRef.current?.focus();
+            }}
           >
             <Text style={styles.inputLabel}>BOLÍVARES (BS)</Text>
             <View style={styles.inputRow}>
               <Text style={styles.inputPrefix}>Bs</Text>
-              <Text style={[styles.inputValue, !bsInput && styles.inputPlaceholder]}>
-                {bsDisplay || "0,00"}
-              </Text>
+              <TextInput
+                ref={bsRef}
+                style={styles.inputValue}
+                value={bsInput}
+                onChangeText={(text) => handleChangeText("bs", text)}
+                onFocus={() => setActiveField("bs")}
+                keyboardType="decimal-pad"
+                placeholder="0,00"
+                placeholderTextColor={colors.textDim}
+                selectionColor={colors.primary}
+                cursorColor={colors.primary}
+              />
+              {bsInput.length > 0 && (
+                <TouchableOpacity
+                  style={styles.clearFieldBtn}
+                  onPress={() => handleClearField("bs")}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="close" size={16} color={colors.textDim} />
+                </TouchableOpacity>
+              )}
             </View>
-            {activeField === "bs" && <View style={styles.activeIndicator} />}
-          </TouchableOpacity>
+          </Pressable>
 
           {/* Divisa INPUT */}
-          <TouchableOpacity
+          <Pressable
             style={[styles.inputSection, activeField === "divisa" && styles.inputSectionActive]}
-            onPress={() => setActiveField("divisa")}
-            activeOpacity={0.8}
+            onPress={() => {
+              setActiveField("divisa");
+              divisaRef.current?.focus();
+            }}
           >
             <Text style={styles.inputLabel}>{selectedOption.label.toUpperCase()} ({selectedOption.simbolo})</Text>
             <View style={styles.inputRow}>
               <Text style={styles.inputPrefix}>{selectedOption.simbolo}</Text>
-              <Text style={[styles.inputValue, !divisaInput && styles.inputPlaceholder]}>
-                {divisaDisplay || "0,00"}
-              </Text>
+              <TextInput
+                ref={divisaRef}
+                style={styles.inputValue}
+                value={divisaInput}
+                onChangeText={(text) => handleChangeText("divisa", text)}
+                onFocus={() => setActiveField("divisa")}
+                keyboardType="decimal-pad"
+                placeholder="0,00"
+                placeholderTextColor={colors.textDim}
+                selectionColor={colors.primary}
+                cursorColor={colors.primary}
+              />
+              {divisaInput.length > 0 && (
+                <TouchableOpacity
+                  style={styles.clearFieldBtn}
+                  onPress={() => handleClearField("divisa")}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="close" size={16} color={colors.textDim} />
+                </TouchableOpacity>
+              )}
             </View>
-            {activeField === "divisa" && <View style={styles.activeIndicator} />}
-          </TouchableOpacity>
+          </Pressable>
 
           {/* Resultado complementario */}
           {isInput && (
@@ -226,13 +306,13 @@ export function CalculatorScreen() {
               <MaterialIcons name="swap-vert" size={14} color={colors.textMuted} />
               <Text style={styles.complementaryText}>
                 {activeField === "bs"
-                  ? `${formatNumber(parseNum(bsInput)!)} Bs = ${divisaDisplay || "—"} ${selectedOption.simbolo}`
-                  : `${formatNumber(parseNum(divisaInput)!)} ${selectedOption.simbolo} = ${bsDisplay || "—"} Bs`}
+                  ? `${formatNumber(parseNum(bsInput)!)} Bs = ${divisaInput || "—"} ${selectedOption.simbolo}`
+                  : `${formatNumber(parseNum(divisaInput)!)} ${selectedOption.simbolo} = ${bsInput || "—"} Bs`}
               </Text>
             </View>
           )}
 
-          {/* Botones de acción: copiar y pegar */}
+          {/* Botones de acción: copiar, pegar y limpiar */}
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={[styles.actionBtn, !isInput && styles.actionBtnDisabled]}
@@ -250,6 +330,12 @@ export function CalculatorScreen() {
               <MaterialIcons name="content-paste" size={16} color={colors.primary} />
               <Text style={styles.actionBtnText}>Pegar</Text>
             </TouchableOpacity>
+            {isInput && (
+              <TouchableOpacity style={[styles.actionBtn, styles.actionBtnClear]} onPress={handleClear}>
+                <MaterialIcons name="delete-outline" size={16} color={colors.red} />
+                <Text style={[styles.actionBtnText, { color: colors.red }]}>Limpiar</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Mensaje de copiado */}
@@ -259,31 +345,6 @@ export function CalculatorScreen() {
               <Text style={styles.copyMessageText}>¡Resultado copiado!</Text>
             </Animated.View>
           )}
-
-          {/* Teclado numérico */}
-          <View style={styles.keypad}>
-            {[["1", "2", "3"], ["4", "5", "6"], ["7", "8", "9"], [",", "0", "backspace"]].map((row, i) => (
-              <View key={i} style={styles.keyRow}>
-                {row.map((key) => (
-                  <TouchableOpacity
-                    key={key}
-                    style={styles.key}
-                    onPress={() => handleKeyPress(key)}
-                    activeOpacity={0.6}
-                  >
-                    {key === "backspace" ? (
-                      <MaterialIcons name="backspace" size={22} color={colors.text} />
-                    ) : (
-                      <Text style={styles.keyText}>{key}</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            ))}
-            <TouchableOpacity style={styles.keyClear} onPress={handleClear} activeOpacity={0.6}>
-              <Text style={styles.keyClearText}>Limpiar</Text>
-            </TouchableOpacity>
-          </View>
 
           {/* Mini resumen de tasas */}
           <View style={styles.ratesFooter}>
@@ -430,7 +491,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 2,
     borderColor: "transparent",
-    position: "relative",
   },
   inputSectionActive: {
     borderColor: colors.primary,
@@ -459,20 +519,17 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "700",
     textAlign: "right",
+    paddingVertical: 0,
     fontVariant: ["tabular-nums"],
   },
-  inputPlaceholder: {
-    color: colors.textDim,
-    fontWeight: "400",
-  },
-  activeIndicator: {
-    position: "absolute",
-    bottom: 8,
-    right: 16,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: colors.primary,
+  clearFieldBtn: {
+    marginLeft: 8,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: colors.surfaceLight,
+    alignItems: "center",
+    justifyContent: "center",
   },
   complementaryResult: {
     flexDirection: "row",
@@ -491,7 +548,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "center",
     gap: 12,
-    marginBottom: 12,
+    marginBottom: 4,
   },
   actionBtn: {
     flexDirection: "row",
@@ -501,6 +558,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 8,
     paddingHorizontal: 16,
+  },
+  actionBtnClear: {
+    backgroundColor: "rgba(255,82,82,0.1)",
   },
   actionBtnDisabled: {
     opacity: 0.4,
@@ -516,44 +576,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 6,
     paddingVertical: 8,
-    marginBottom: 4,
   },
   copyMessageText: {
     color: colors.green,
     fontSize: 12,
-    fontWeight: "600",
-  },
-  keypad: {
-    gap: 6,
-  },
-  keyRow: {
-    flexDirection: "row",
-    gap: 6,
-  },
-  key: {
-    flex: 1,
-    backgroundColor: colors.surfaceLight,
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  keyText: {
-    color: colors.text,
-    fontSize: 18,
-    fontWeight: "600",
-  },
-  keyClear: {
-    backgroundColor: "rgba(255,82,82,0.1)",
-    borderRadius: 14,
-    paddingVertical: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 2,
-  },
-  keyClearText: {
-    color: colors.red,
-    fontSize: 14,
     fontWeight: "600",
   },
   ratesFooter: {

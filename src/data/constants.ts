@@ -1,6 +1,10 @@
 import { ConversionOption } from "../types/rates";
 
-export const CACHE_KEY = "@rates_cache";
+// Incrementar este número cada vez que cambies la estructura de datos
+// para invalidar la caché de usuarios existentes
+const CACHE_VERSION = 2;
+
+export const CACHE_KEY = `@rates_cache_v${CACHE_VERSION}`;
 
 export const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 

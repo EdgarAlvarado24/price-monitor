@@ -33,9 +33,18 @@ yarn-error.*
 # local env files
 .env*.local
 
+# codegraph (local index, regenerable)
+.codegraph/
+
+# IDE
+.idea/
+
 # typescript
 *.tsbuildinfo
 
 # generated native folders
 /ios
 /android
+
+# opencode (personal config)
+opencode.jsonc
